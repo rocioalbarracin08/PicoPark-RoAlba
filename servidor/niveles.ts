@@ -4,7 +4,7 @@ export interface Plataforma {
   y: number;
   ancho: number;
   alto: number;
-  etiqueta?: string; // para identificar cuerpos especiales
+  etiqueta?: string;
 }
 
 export interface ConfigNivel {
@@ -19,7 +19,7 @@ export interface ConfigNivel {
   descripcion: string;
 }
 
-// Nivel 1: plataformas simples, la llave está al otro lado del mapa
+// Nivel 1: mapa simple
 export const NIVEL_1: ConfigNivel = {
   numero: 1,
   nombre: 'El Puente',
@@ -27,13 +27,9 @@ export const NIVEL_1: ConfigNivel = {
   altoMundo: 600,
   descripcion: 'Lleguen a la llave y lleven a todos a la salida.',
   plataformas: [
-    // Suelo principal
     { x: 600, y: 580, ancho: 1200, alto: 20, etiqueta: 'suelo' },
-    // Plataforma del medio (obstáculo)
     { x: 400, y: 420, ancho: 200, alto: 20, etiqueta: 'plataforma-media' },
-    // Plataforma alta donde está la llave
     { x: 900, y: 300, ancho: 200, alto: 20, etiqueta: 'plataforma-llave' },
-    // Paredes laterales
     { x: 0,    y: 300, ancho: 20, alto: 600, etiqueta: 'pared-izquierda' },
     { x: 1200, y: 300, ancho: 20, alto: 600, etiqueta: 'pared-derecha' },
   ],
@@ -55,13 +51,9 @@ export const NIVEL_2: ConfigNivel = {
   altoMundo: 700,
   descripcion: 'Apílense para alcanzar la llave en las alturas.',
   plataformas: [
-    // Suelo
     { x: 400, y: 680, ancho: 800, alto: 20, etiqueta: 'suelo' },
-    // Plataforma MUY alta, solo alcanzable apilándose
     { x: 200, y: 300, ancho: 160, alto: 20, etiqueta: 'plataforma-alta' },
-    // Plataforma de salida
     { x: 650, y: 500, ancho: 200, alto: 20, etiqueta: 'plataforma-salida' },
-    // Paredes
     { x: 0,   y: 350, ancho: 20, alto: 700, etiqueta: 'pared-izquierda' },
     { x: 800, y: 350, ancho: 20, alto: 700, etiqueta: 'pared-derecha' },
   ],

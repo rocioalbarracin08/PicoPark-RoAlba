@@ -1,13 +1,12 @@
 import type Matter from 'matter-js';
 
-
-export type FaseJuego = 'lobby' | 'jugando' | 'nivel-completado';
+export type FaseJuego = 'esperando' | 'jugando' | 'nivel-completado';
 
 export interface Jugador {
   id:            string;
   nombre:        string;
   color:         string;
-  cuerpofisico:  Matter.Body;  
+  cuerpofisico:  Matter.Body;
   cargandoLlave: boolean;
   conectado:     boolean;
 }
@@ -20,19 +19,19 @@ export interface EstadoJuego {
   llaveEnJuego:  boolean;
 }
 
-
 export const CONFIGS_JUGADORES = [
-  { color: 'lightblue', nombre: 'Jugador 1' },
-  { color: 'purple',    nombre: 'Jugador 2' },
-  { color: 'red',       nombre: 'Jugador 3' },
-  { color: 'orange',    nombre: 'Jugador 4' },
+  { color: '#85bdd8', nombre: 'Jugador 1' },
+  { color: '#ce93d8c9', nombre: 'Jugador 2' },
+  { color: '#b85656', nombre: 'Jugador 3' },
+  { color: '#fddcab', nombre: 'Jugador 4' },
 ] as const;
 
-export const MAX_JUGADORES = 4;
+export const MAX_JUGADORES     = 4;
+export const MIN_PARA_GANAR    = 3; //cant. mínima de jugadores para ganar el nivel
 
 export function crearEstadoInicial(): EstadoJuego {
   return {
-    fase:          'lobby',
+    fase:          'esperando',
     nivelActual:   1,
     jugadores:     new Map(),
     llaveRecogida: false,
