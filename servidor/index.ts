@@ -1,4 +1,3 @@
-
 import os from 'os';
 import qrcode from 'qrcode-terminal';
 import { iniciarServidorWS } from './servidor-ws';
@@ -18,14 +17,12 @@ function obtenerIPLocal(): string {
 }
 
 const ip       = obtenerIPLocal();
-const urlJuego = `ws://${ip}:${PUERTO}`;
+const urlJuego = `http://${ip}:${PUERTO}`;
 
-console.log(' PikoPark - Servidor');
-console.log(`URL para unirse: ${urlJuego.padEnd(29)}`);
-console.log('Escaneá este QR con la app del celular:');
-
-
+console.log('🎮 PicoPark - Servidor');
+console.log(`🌐 Página del juego: ${urlJuego}`);
+console.log('📱 Escaneá este QR:');
 qrcode.generate(urlJuego, { small: true });
+console.log('⏳ Esperando jugadores (0/4)...');
 
-console.log('Esperando jugadores (0/4)...');
-iniciarServidorWS(PUERTO);
+iniciarServidorWS(PUERTO, `${import.meta.dir}/../pagDeJuego`);

@@ -1,9 +1,17 @@
-// servidor-ws.ts
-// Maneja conexiones WebSocket y el loop principal del juego.
-// La física corre aquí en el servidor — nunca en el celular.
-
-import { WebSocketServer, WebSocket } from 'ws';
+import { Server as IOServer, Socket } from 'socket.io';
+import { createServer } from 'http';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import Matter from 'matter-js';
+import {
+  crearMotorFisico,
+  crearCuerpoJugador,
+  aplicarMovimiento,
+  estaEnSuelo,
+  avanzarMotor,
+  type MotorFisico,
+} from './motor';
+import { NIVELES } from './niveles';
 import {
   crearEstadoInicial,
   CONFIGS_JUGADORES,
@@ -11,132 +19,137 @@ import {
   MIN_PARA_GANAR,
 } from './tipos';
 import type { EstadoJuego } from './tipos';
-import {
-  crearMotorFisico,
-  crearCuerpoJugador,
-  aplicarMovimiento,
-  estaEnSuelo,
-  avanzarMotor,
-} from './motor';
-import { NIVELES } from './niveles';
 
-const inputsActivos = new Map<string, Set<string>>();
-const ultimoInput   = new Map<string, number>(); // para rate limiting
-const INTERVALO_MS  = 1000 / 30;                 // 30 FPS = 33ms
+const TICK_MS = 33; // ~30 FPS
 
-export function iniciarServidorWS(puerto: number): WebSocketServer {
-  const wss    = new WebSocketServer({ port: puerto });
-  const estado: EstadoJuego = crearEstadoInicial();
-  const motor  = crearMotorFisico(NIVELES[0]);
+export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
 
+  // ── HTTP server que sirve pagDeJuego ──────────────────────────────────────
+  const httpServer = createServer((req, res) => {
+    const url = req.url ?? '/';
+
+    const mapa: Record<string, string> = {
+      '/':            'index.html',
+      '/index.html':  'index.html',
+      '/juego.js':    'juego.js',
+      '/estilos.css': 'estilos.css',
+    };
+
+    const tipos: Record<string, string> = {
+      'index.html':  'text/html; charset=utf-8',
+      'juego.js':    'application/javascript; charset=utf-8',
+      'estilos.css': 'text/css; charset=utf-8',
+    };
+
+    const archivo = mapa[url];
+    if (archivo) {
+      try {
+        const contenido = readFileSync(join(dirPagDeJuego, archivo));
+        res.writeHead(200, { 'Content-Type': tipos[archivo] });
+        res.end(contenido);
+      } catch {
+        res.writeHead(404);
+        res.end('Archivo no encontrado');
+      }
+    } else {
+      res.writeHead(404);
+      res.end('404');
+    }
+  });
+
+  // ── socket.io sobre el mismo HTTP server ──────────────────────────────────
+  const io = new IOServer(httpServer, {
+    cors:         { origin: '*' },
+    pingTimeout:  10000,
+    pingInterval: 3000,
+  });
+
+  const estado        = crearEstadoInicial();
+  const motor         = crearMotorFisico(NIVELES[estado.nivelActual - 1]);
+  const inputsActivos = new Map<string, Set<string>>();
+
+  // ── Game loop ~30 FPS ─────────────────────────────────────────────────────
+  let ultimoTick = Date.now();
   setInterval(() => {
-    if (contarConectados(estado) === 0) return;
+    const ahora = Date.now();
+    const delta = ahora - ultimoTick;
+    ultimoTick  = ahora;
 
-    // 1. Avanzar física (reemplaza Runner que necesita window)
-    avanzarMotor(motor.motor, INTERVALO_MS);
-
-    // 2. Aplicar inputs de cada jugador conectado
-    for (const [id, jugador] of estado.jugadores) {
+    for (const [, jugador] of estado.jugadores) {
       if (!jugador.conectado) continue;
-      const inputs  = inputsActivos.get(id) ?? new Set();
+      const inputs  = inputsActivos.get(jugador.id) ?? new Set();
       const enSuelo = estaEnSuelo(jugador.cuerpofisico, motor.motor);
       aplicarMovimiento(jugador.cuerpofisico, inputs, enSuelo);
     }
 
-    // 3. Verificar llave, puerta y caídas al vacío
-    verificarLogicaJuego(estado, motor, wss);
+    avanzarMotor(motor.motor, delta);
+    verificarLogicaJuego(estado, motor, io);
+    io.emit('estado', construirSnapshot(estado, motor));
+  }, TICK_MS);
 
-    // 4. Transmitir snapshot del mundo a todos los clientes conectados
-    broadcast(wss, construirSnapshot(estado));
+  // ── Conexión de un cliente ────────────────────────────────────────────────
+  io.on('connection', (socket: Socket) => {
+    const tipo = socket.handshake.query.tipo;
 
-  }, INTERVALO_MS);
-
-  // ─── Nueva conexión ──────────────────────────────────────────────────────
-  wss.on('connection', (socket: WebSocket) => {
-    const jugadoresActivos = [...estado.jugadores.values()].filter(j => j.conectado);
-
-    // Rechazar si ya hay 4 — hot-join controlado
-    if (jugadoresActivos.length >= MAX_JUGADORES) {
-      socket.send(JSON.stringify({
-        tipo:    'error',
-        mensaje: 'El juego está lleno. Máximo 4 jugadores.',
-      }));
-      socket.close();
+    // La pantalla del juego se conecta solo para recibir estado
+    if (tipo === 'pantalla') {
+      console.log('🖥️  Pantalla del juego conectada');
       return;
     }
 
-    const idSocket = generarId();
-    const indice   = jugadoresActivos.length;
-    const config   = CONFIGS_JUGADORES[indice];
-    const nivel    = NIVELES[estado.nivelActual - 1];
-    const posicion = nivel.posicionesIniciales[indice];
+    // Gamepad: verificar límite de jugadores
+    const conectados = contarConectados(estado);
+    if (conectados >= MAX_JUGADORES) {
+      console.log(`🚫 Partida llena — rechazado (${socket.id})`);
+      socket.emit('partida-llena');
+      socket.disconnect(true);
+      return;
+    }
 
-    // Crear y registrar cuerpo físico
-    const cuerpo = crearCuerpoJugador(posicion.x, posicion.y, idSocket);
+    // Asignar jugador
+    const config = CONFIGS_JUGADORES[conectados];
+    const nivel  = NIVELES[estado.nivelActual - 1];
+    const pos    = nivel.posicionesIniciales[conectados];
+    const cuerpo = crearCuerpoJugador(pos.x, pos.y, socket.id);
     Matter.World.add(motor.mundo, cuerpo);
 
-    estado.jugadores.set(idSocket, {
-      id:            idSocket,
+    estado.jugadores.set(socket.id, {
+      id:            socket.id,
       nombre:        config.nombre,
       color:         config.color,
       cuerpofisico:  cuerpo,
       cargandoLlave: false,
       conectado:     true,
     });
+    inputsActivos.set(socket.id, new Set());
 
-    // Apenas hay alguien, el juego está activo
-    estado.fase = 'jugando';
+    // Con 1 jugador ya se puede mover
+    if (estado.fase === 'esperando') {
+      estado.fase = 'jugando';
+    }
 
-    inputsActivos.set(idSocket, new Set());
-    ultimoInput.set(idSocket, 0);
+    socket.emit('bienvenido', {
+      id:     socket.id,
+      nombre: config.nombre,
+      color:  config.color,
+    });
 
     console.log(`✅ ${config.nombre} conectado — jugadores: ${contarConectados(estado)}/${MAX_JUGADORES}`);
 
-    // Handshake: el celular sabe quién es
-    socket.send(JSON.stringify({
-      tipo:   'bienvenida',
-      id:     idSocket,
-      nombre: config.nombre,
-      color:  config.color,
-    }));
-
-    // La pantalla PC sabe que entró alguien nuevo
-    broadcast(wss, {
-      tipo:                'jugador-unido',
-      id:                  idSocket,
-      nombre:              config.nombre,
-      color:               config.color,
-      jugadoresConectados: contarConectados(estado),
-    });
-
-    // ─── Inputs del celular con rate limiting ────────────────────────────
-    socket.on('message', (datos: Buffer) => {
-      const ahora  = Date.now();
-      const ultimo = ultimoInput.get(idSocket) ?? 0;
-      if (ahora - ultimo < 16) return;
-      ultimoInput.set(idSocket, ahora);
-
-      try {
-        const msg = JSON.parse(datos.toString());
-        if (msg.tipo !== 'input') return;
-
-        const inputs = inputsActivos.get(idSocket);
-        if (!inputs) return;
-
-        // keydown → agregar, keyup → quitar
-        if (msg.estado === 'presionado') {
-          inputs.add(msg.direccion);
-        } else {
-          inputs.delete(msg.direccion);
-        }
-      } catch {
-        // Mensaje malformado: ignorar sin crashear el servidor
+    // ── Input del gamepad ──────────────────────────────────────────────────
+    socket.on('input', (msg: { direccion: string; estado: 'presionado' | 'soltado' }) => {
+      const inputs = inputsActivos.get(socket.id);
+      if (!inputs) return;
+      if (msg.estado === 'presionado') {
+        inputs.add(msg.direccion);
+      } else {
+        inputs.delete(msg.direccion);
       }
     });
 
-    // ─── Desconexión ─────────────────────────────────────────────────────
-    socket.on('close', () => {
-      const jugador = estado.jugadores.get(idSocket);
+    // ── Desconexión ────────────────────────────────────────────────────────
+    socket.on('disconnect', (razon) => {
+      const jugador = estado.jugadores.get(socket.id);
       if (!jugador) return;
 
       jugador.conectado = false;
@@ -147,132 +160,118 @@ export function iniciarServidorWS(puerto: number): WebSocketServer {
         estado.llaveRecogida  = false;
         estado.llaveEnJuego   = true;
         reaparecerLlave(motor, estado.nivelActual);
-        broadcast(wss, { tipo: 'llave-reaparecio' });
+        io.emit('llave-reaparecio');
       }
 
-      //volvemos a estado de espera
       if (contarConectados(estado) === 0) {
         estado.fase = 'esperando';
       }
 
-      //evitar memory leak
-      inputsActivos.delete(idSocket);
-      ultimoInput.delete(idSocket);
-
-      console.log(`❌ ${jugador.nombre} desconectado — jugadores: ${contarConectados(estado)}/${MAX_JUGADORES}`);
-
-      broadcast(wss, {
-        tipo:                'jugador-desconectado',
-        id:                  idSocket,
-        nombre:              jugador.nombre,
-        jugadoresConectados: contarConectados(estado),
-      });
+      inputsActivos.delete(socket.id);
+      console.log(`❌ ${jugador.nombre} desconectado (${razon}) — jugadores: ${contarConectados(estado)}/${MAX_JUGADORES}`);
+      io.emit('jugador-desconectado', { id: socket.id, nombre: jugador.nombre });
     });
   });
 
-  return wss;
+  // ── Arrancar servidor ─────────────────────────────────────────────────────
+  httpServer.listen(puerto, '0.0.0.0', () => {
+    console.log(`🟢 Servidor escuchando en puerto ${puerto}`);
+  });
+
+  return io;
 }
 
-// ─── Lógica del juego ────────────────────────────────────────────────────────
-function verificarLogicaJuego(
-  estado: EstadoJuego,
-  motor:  ReturnType<typeof crearMotorFisico>,
-  wss:    WebSocketServer,
-): void {
-  const nivel            = NIVELES[estado.nivelActual - 1];
-  const jugadoresActivos = [...estado.jugadores.values()].filter(j => j.conectado);
+// ── Funciones auxiliares (fuera de iniciarServidorWS) ─────────────────────
 
-  for (const jugador of jugadoresActivos) {
-    const pos = jugador.cuerpofisico.position;
-
-    if (estado.llaveEnJuego && !estado.llaveRecogida && motor.cuerpoLlave) {
-      const distancia = Math.hypot(
-        pos.x - motor.cuerpoLlave.position.x,
-        pos.y - motor.cuerpoLlave.position.y,
-      );
-
-      if (distancia < 40) {
-        jugador.cargandoLlave = true;
-        estado.llaveRecogida  = true;
-        estado.llaveEnJuego   = false;
-        Matter.World.remove(motor.mundo, motor.cuerpoLlave);
-        motor.cuerpoLlave     = null;
-        broadcast(wss, { tipo: 'llave-recogida', jugadorId: jugador.id });
-      }
-    }
-
-    if (jugador.cargandoLlave && pos.y > nivel.altoMundo + 100) {
-      jugador.cargandoLlave = false;
-      estado.llaveRecogida  = false;
-      estado.llaveEnJuego   = true;
-      reaparecerLlave(motor, estado.nivelActual);
-      broadcast(wss, { tipo: 'llave-reaparecio' });
-    }
+function contarConectados(estado: EstadoJuego): number {
+  let count = 0;
+  for (const j of estado.jugadores.values()) {
+    if (j.conectado) count++;
   }
-
-  if (!estado.llaveRecogida || !motor.cuerposPuerta[0]) return;
-  if (jugadoresActivos.length < MIN_PARA_GANAR) return;
-
-  const puerta        = motor.cuerposPuerta[0];
-  const todosEnPuerta = jugadoresActivos.every(j =>
-    Matter.Bounds.contains(puerta.bounds, j.cuerpofisico.position)
-  );
-
-  if (todosEnPuerta) {
-    estado.fase = 'nivel-completado';
-    broadcast(wss, { tipo: 'nivel-completado', nivel: estado.nivelActual });
-    console.log(`🏆 Nivel ${estado.nivelActual} completado con ${jugadoresActivos.length} jugadores`);
-  }
+  return count;
 }
 
-function reaparecerLlave(
-  motor:       ReturnType<typeof crearMotorFisico>,
-  nivelActual: number,
-): void {
-  const nivel      = NIVELES[nivelActual - 1];
-  const nuevaLlave = Matter.Bodies.circle(
-    nivel.posicionLlave.x,
-    nivel.posicionLlave.y,
-    15,
-    { isStatic: true, label: 'llave' }
-  );
-  Matter.World.add(motor.mundo, nuevaLlave);
-  motor.cuerpoLlave = nuevaLlave;
-}
-
-function construirSnapshot(estado: EstadoJuego) {
-  return {
-    tipo:      'estado',
-    fase:      estado.fase,
-    jugadores: [...estado.jugadores.values()].map(j => ({
+function construirSnapshot(estado: EstadoJuego, motor: MotorFisico) {
+  const jugadores = [];
+  for (const j of estado.jugadores.values()) {
+    if (!j.conectado) continue;
+    jugadores.push({
       id:            j.id,
       nombre:        j.nombre,
       color:         j.color,
-      x:             Math.round(j.cuerpofisico.position.x),
-      y:             Math.round(j.cuerpofisico.position.y),
+      x:             j.cuerpofisico.position.x,
+      y:             j.cuerpofisico.position.y,
       cargandoLlave: j.cargandoLlave,
-      conectado:     j.conectado,
-    })),
+    });
+  }
+
+  const nivel = NIVELES[estado.nivelActual - 1];
+  return {
+    fase:          estado.fase,
+    jugadores,
     llaveEnJuego:  estado.llaveEnJuego,
     llaveRecogida: estado.llaveRecogida,
     nivelActual:   estado.nivelActual,
     minParaGanar:  MIN_PARA_GANAR,
+    llaveX: estado.llaveEnJuego && motor.cuerpoLlave ? motor.cuerpoLlave.position.x : null,
+    llaveY: estado.llaveEnJuego && motor.cuerpoLlave ? motor.cuerpoLlave.position.y : null,
+    puertaX: nivel.posicionPuerta.x,
+    puertaY: nivel.posicionPuerta.y,
   };
 }
 
-function broadcast(wss: WebSocketServer, datos: object): void {
-  const mensaje = JSON.stringify(datos);
-  wss.clients.forEach((cliente) => {
-    if (cliente.readyState === WebSocket.OPEN) {
-      cliente.send(mensaje);
-    }
+function reaparecerLlave(motor: MotorFisico, nivelActual: number) {
+  if (!motor.cuerpoLlave) return;
+  const nivel = NIVELES[nivelActual - 1];
+  Matter.Body.setPosition(motor.cuerpoLlave, {
+    x: nivel.posicionLlave.x,
+    y: nivel.posicionLlave.y,
   });
+  Matter.Body.setVelocity(motor.cuerpoLlave, { x: 0, y: 0 });
 }
 
-function contarConectados(estado: EstadoJuego): number {
-  return [...estado.jugadores.values()].filter(j => j.conectado).length;
-}
+function verificarLogicaJuego(estado: EstadoJuego, motor: MotorFisico, io: IOServer) {
+  if (estado.fase !== 'jugando') return;
 
-function generarId(): string {
-  return Math.random().toString(36).slice(2, 9);
+  const activos = [...estado.jugadores.values()].filter(j => j.conectado);
+  const nivel   = NIVELES[estado.nivelActual - 1];
+
+  // Alguien agarra la llave
+  if (estado.llaveEnJuego && !estado.llaveRecogida && motor.cuerpoLlave) {
+    for (const jugador of activos) {
+      const dx = jugador.cuerpofisico.position.x - motor.cuerpoLlave.position.x;
+      const dy = jugador.cuerpofisico.position.y - motor.cuerpoLlave.position.y;
+      if (Math.sqrt(dx * dx + dy * dy) < 40) {
+        jugador.cargandoLlave = true;
+        estado.llaveRecogida  = true;
+        estado.llaveEnJuego   = false;
+        io.emit('llave-recogida', { jugadorId: jugador.id });
+        break;
+      }
+    }
+  }
+
+  // Jugador con llave cae al vacío → respawn llave
+  for (const jugador of activos) {
+    if (jugador.cargandoLlave && jugador.cuerpofisico.position.y > nivel.altoMundo + 50) {
+      jugador.cargandoLlave = false;
+      estado.llaveRecogida  = false;
+      estado.llaveEnJuego   = true;
+      reaparecerLlave(motor, estado.nivelActual);
+      io.emit('llave-reaparecio');
+    }
+  }
+
+  // Victoria: ≥ MIN_PARA_GANAR cerca de la puerta con la llave
+  if (estado.llaveRecogida) {
+    const enSalida = activos.filter(j => {
+      const dx = Math.abs(j.cuerpofisico.position.x - nivel.posicionPuerta.x);
+      const dy = Math.abs(j.cuerpofisico.position.y - nivel.posicionPuerta.y);
+      return dx < 60 && dy < 80;
+    });
+    if (enSalida.length >= MIN_PARA_GANAR) {
+      estado.fase = 'nivel-completado';
+      io.emit('nivel-completado', { nivel: estado.nivelActual });
+    }
+  }
 }
