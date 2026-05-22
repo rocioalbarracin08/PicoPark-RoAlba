@@ -57,11 +57,10 @@ export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
     }
   });
 
-  // ── socket.io sobre el mismo HTTP server ──────────────────────────────────
   const io = new IOServer(httpServer, {
     cors:         { origin: '*' },
-    pingTimeout:  10000,
-    pingInterval: 3000,
+    pingTimeout:  60000,   // era 10000 — le damos 60s antes de desconectar
+    pingInterval: 25000,   // era 3000  — ping cada 25s, no cada 3s
   });
 
   const estado        = crearEstadoInicial();
@@ -91,9 +90,11 @@ export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
   io.on('connection', (socket: Socket) => {
     const tipo = socket.handshake.query.tipo;
 
-    // La pantalla del juego se conecta solo para recibir estado
     if (tipo === 'pantalla') {
       console.log('🖥️  Pantalla del juego conectada');
+      socket.on('disconnect', (razon) => {
+        console.log(`🖥️  Pantalla del juego desconectada (${razon})`);
+      });
       return;
     }
 
@@ -168,14 +169,14 @@ export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
       }
 
       inputsActivos.delete(socket.id);
-      console.log(`❌ ${jugador.nombre} desconectado (${razon}) — jugadores: ${contarConectados(estado)}/${MAX_JUGADORES}`);
+      console.log(`❌ ${jugador.nombre} desconectado — jugadores: ${contarConectados(estado)}/${MAX_JUGADORES}`);
       io.emit('jugador-desconectado', { id: socket.id, nombre: jugador.nombre });
     });
   });
 
   // ── Arrancar servidor ─────────────────────────────────────────────────────
   httpServer.listen(puerto, '0.0.0.0', () => {
-    console.log(`🟢 Servidor escuchando en puerto ${puerto}`);
+    console.log(`Servidor escuchando en puerto ${puerto}`);
   });
 
   return io;

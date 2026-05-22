@@ -4,7 +4,7 @@ import type { ConfigNivel } from './niveles';
 const { Engine, Bodies, Body, World, Composite, Bounds } = Matter;
 
 const VELOCIDAD_MOVIMIENTO = 5;
-const FUERZA_SALTO         = -0.015;
+const FUERZA_SALTO         = -0.08;
 const VEL_Y_MAX            = 15;
 
 export interface MotorFisico {
@@ -69,26 +69,25 @@ export function crearCuerpoJugador(x: number, y: number, id: string): Matter.Bod
 }
 
 export function aplicarMovimiento(
+  //Segun los inputs el cuerpo se mueve
   cuerpo:  Matter.Body,
   inputs:  Set<string>,
   enSuelo: boolean,
 ): void {
-  // Movimiento horizontal
+  //Movimiento horizontal
   if (inputs.has('izquierda')) {
     Body.setVelocity(cuerpo, { x: -VELOCIDAD_MOVIMIENTO, y: cuerpo.velocity.y });
   } else if (inputs.has('derecha')) {
     Body.setVelocity(cuerpo, { x: VELOCIDAD_MOVIMIENTO, y: cuerpo.velocity.y });
   } else {
-    // Sin input: frena suavemente
     Body.setVelocity(cuerpo, { x: cuerpo.velocity.x * 0.8, y: cuerpo.velocity.y });
   }
 
-  // Salto solo si está pisando algo
   if (inputs.has('salto') && enSuelo) {
     Body.applyForce(cuerpo, cuerpo.position, { x: 0, y: FUERZA_SALTO });
   }
 
-  // Clamp velocidad vertical: evita que atraviese paredes en caída libre
+  //Clamp velocidad vertical: evita que atraviese paredes en caída libre
   if (cuerpo.velocity.y > VEL_Y_MAX) {
     Body.setVelocity(cuerpo, { x: cuerpo.velocity.x, y: VEL_Y_MAX });
   }

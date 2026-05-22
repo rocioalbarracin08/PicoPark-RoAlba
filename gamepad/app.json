@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "PicoPark Gamepad",
+    "slug": "picopark-gamepad",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "platforms": ["android", "ios"],
+    "plugins": [
+      [
+        "expo-camera",
+        { "cameraPermission": "Necesitamos la cámara para escanear el QR del juego." }
+      ]
+    ],
+    "android": {
+      "adaptiveIcon": { "backgroundColor": "#1a1a2e" },
+      "package": "com.picopark.gamepad",
+      "usesCleartextTraffic": true
+    },
+    "ios": {
+      "supportsTablet": false
+    }
+  }
+}
