@@ -70,7 +70,6 @@ export function aplicarMovimiento(
     vx = 0;
   }
 
-  // SALTO
   if (
     inputs.has('salto')
     &&
@@ -81,7 +80,7 @@ export function aplicarMovimiento(
 
     Body.setVelocity(cuerpo, {
       x: vx,
-      y: -16,
+      y: -13,
     });
 
     return;

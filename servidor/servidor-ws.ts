@@ -21,47 +21,43 @@ import {
   MIN_PARA_GANAR,
 } from './tipos';
 
+import type { Jugador } from './tipos';
+
 const TICK_RATE = 1000 / 60;
 
-export function iniciarServidorWS(
-  puerto: number,
-  dirPagDeJuego: string,
-) {
+// Extiende Jugador con el slot (para el pool de colores)
+interface JugadorInterno extends Jugador {
+  slotIndex: number;
+}
 
+export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
+
+  // HTTP 
   const httpServer = createServer((req, res) => {
     const url = req.url ?? '/';
-
     const mapa: Record<string, string> = {
       '/': 'index.html',
       '/index.html': 'index.html',
       '/juego.js': 'juego.js',
       '/estilos.css': 'estilos.css',
     };
-
     const tipos: Record<string, string> = {
       'index.html': 'text/html',
       'juego.js': 'application/javascript',
       'estilos.css': 'text/css',
     };
-
     const archivo = mapa[url];
-
-    if (!archivo) {
-      res.writeHead(404);
-      res.end('404');
-      return;
-    }
-
+    if (!archivo) { res.writeHead(404); res.end('404'); return; }
     try {
       const contenido = readFileSync(join(dirPagDeJuego, archivo));
       res.writeHead(200, { 'Content-Type': tipos[archivo] });
       res.end(contenido);
     } catch {
-      res.writeHead(500);
-      res.end('error');
+      res.writeHead(500); res.end('error');
     }
   });
 
+  // Socket.IO 
   const io = new IOServer(httpServer, {
     cors: { origin: '*' },
     transports: ['websocket'],
@@ -69,29 +65,49 @@ export function iniciarServidorWS(
     pingInterval: 25000,
   });
 
-  const estado = crearEstadoInicial();
-  const motor  = crearMotorFisico();
-  const nivel  = NIVELES[0];
-
-  for (const p of nivel.plataformas) {
-    const plataforma = Matter.Bodies.rectangle(p.x, p.y, p.ancho, p.alto, {
-      isStatic: true,
-      label: p.etiqueta ?? 'plataforma',
-    });
-    Matter.World.add(motor.mundo, plataforma);
-  }
-
+  const estado       = crearEstadoInicial();
+  const motor        = crearMotorFisico();
+  const nivelConfig  = NIVELES[estado.nivelActual - 1];
   const inputsActivos = new Map<string, Set<string>>();
-
-  // Pool de slots de color
   const slotsLibres: number[] = [0, 1, 2, 3];
 
-  //  Game loop
+  //  Crear plataformas del nivel 
+  for (const p of nivelConfig.plataformas) {
+    Matter.World.add(motor.mundo,
+      Matter.Bodies.rectangle(p.x, p.y, p.ancho, p.alto, {
+        isStatic: true,
+        label: p.etiqueta ?? 'plataforma',
+      })
+    );
+  }
+
+  let cuerpoLlave: Matter.Body | null = Matter.Bodies.circle(
+    nivelConfig.posicionLlave.x,
+    nivelConfig.posicionLlave.y,
+    18,
+    { isStatic: true, isSensor: true, label: 'llave' }
+  );
+  Matter.World.add(motor.mundo, cuerpoLlave);
+
+  function reaparecerLlave() {
+    if (!cuerpoLlave) return;
+    Matter.Body.setPosition(cuerpoLlave, {
+      x: nivelConfig.posicionLlave.x,
+      y: nivelConfig.posicionLlave.y,
+    });
+    estado.llaveEnJuego  = true;
+    estado.llaveRecogida = false;
+    // Liberar al jugador que la cargaba
+    for (const j of estado.jugadores.values()) {
+      j.cargandoLlave = false;
+    }
+  }
+
   let ultimoTick = Date.now();
 
   setInterval(() => {
     const ahora = Date.now();
-    const delta = Math.min(ahora - ultimoTick, 50); // máx 50ms para evitar saltos físicos
+    const delta = Math.min(ahora - ultimoTick, 50);
     ultimoTick  = ahora;
 
     for (const jugador of estado.jugadores.values()) {
@@ -102,15 +118,62 @@ export function iniciarServidorWS(
 
     avanzarMotor(motor.motor, delta);
 
-    // La llave aparece cuando hay suficientes jugadores
-    estado.llaveEnJuego = estado.jugadores.size >= MIN_PARA_GANAR;
+    const cantJugadores = estado.jugadores.size;
+    if (cantJugadores < MIN_PARA_GANAR) {
+      if (estado.llaveEnJuego) {
+        estado.llaveEnJuego = false;
+      }
+    } else if (!estado.llaveEnJuego && !estado.llaveRecogida) {
+      estado.llaveEnJuego = true;
+    }
 
-    verificarVictoria(estado, motor, nivel, io);
+    // Alguien agarra la llave 
+    if (estado.llaveEnJuego && !estado.llaveRecogida && cuerpoLlave) {
+      for (const jugador of estado.jugadores.values()) {
+        const dx = Math.abs(jugador.cuerpofisico.position.x - cuerpoLlave.position.x);
+        const dy = Math.abs(jugador.cuerpofisico.position.y - cuerpoLlave.position.y);
+        if (dx < 40 && dy < 50) {
+          jugador.cargandoLlave = true;
+          estado.llaveRecogida  = true;
+          estado.llaveEnJuego   = false;
+          io.emit('llave-recogida', { jugadorId: jugador.id, nombre: jugador.nombre });
+          console.log(`🗝️  ${jugador.nombre} agarró la llave`);
+          break;
+        }
+      }
+    }
 
-    io.emit('estado', construirSnapshot(estado));
+    for (const jugador of estado.jugadores.values()) {
+      if (jugador.cargandoLlave && jugador.cuerpofisico.position.y > nivelConfig.altoMundo + 100) {
+        console.log(`🗝️  ${jugador.nombre} cayó con la llave — reaparece`);
+        reaparecerLlave();
+        io.emit('llave-reaparecio');
+        break;
+      }
+    }
+
+    if (estado.llaveRecogida && estado.fase === 'jugando') {
+      const puerta    = nivelConfig.posicionPuerta;
+      const jugadores = [...estado.jugadores.values()];
+
+      const enSalida = jugadores.filter(j => {
+        const dx = Math.abs(j.cuerpofisico.position.x - puerta.x);
+        const dy = Math.abs(j.cuerpofisico.position.y - puerta.y);
+        return dx < 80 && dy < 80;
+      });
+
+      if (enSalida.length >= MIN_PARA_GANAR) {
+        estado.fase = 'nivel-completado';
+        io.emit('nivel-completado', { nivel: estado.nivelActual });
+        console.log(`🎉 Nivel ${estado.nivelActual} completado!`);
+      }
+    }
+
+    io.emit('estado', construirSnapshot(estado, cuerpoLlave));
 
   }, TICK_RATE);
 
+  // Conexiones 
   io.on('connection', (socket: Socket) => {
     const tipo = socket.handshake.query.tipo;
 
@@ -120,7 +183,7 @@ export function iniciarServidorWS(
       return;
     }
 
-    // Gamepad: verificar si hay slots disponibles
+    // Gamepad: verificar slots
     if (slotsLibres.length === 0) {
       socket.emit('partida-llena'); 
       socket.disconnect();
@@ -128,24 +191,24 @@ export function iniciarServidorWS(
       return;
     }
 
-    // Tomar el slot disponible
     const slotIndex = slotsLibres.shift()!;
     const config    = CONFIGS_JUGADORES[slotIndex];
-    const spawn     = nivel.posicionesIniciales[slotIndex];
+    const spawn     = nivelConfig.posicionesIniciales[slotIndex];
+    const cuerpo    = crearCuerpoJugador(spawn.x, spawn.y, socket.id);
 
-    const cuerpo = crearCuerpoJugador(spawn.x, spawn.y, socket.id);
     Matter.World.add(motor.mundo, cuerpo);
 
-    estado.jugadores.set(socket.id, {
+    const jugador: JugadorInterno = {
       id:            socket.id,
       nombre:        config.nombre,
       color:         config.color,
       cuerpofisico:  cuerpo,
       conectado:     true,
       cargandoLlave: false,
-      slotIndex,       
-    } as any);
+      slotIndex,
+    };
 
+    estado.jugadores.set(socket.id, jugador);
     inputsActivos.set(socket.id, new Set());
 
     socket.emit('bienvenido', {
@@ -154,36 +217,37 @@ export function iniciarServidorWS(
       color:  config.color,
     });
 
-    console.log(`✅ ${config.nombre} conectado — N* de jugador disponible: [${slotsLibres.join(', ')}]`);
+    console.log(`✅ ${config.nombre} (slot ${slotIndex}) conectado — slots libres: [${slotsLibres.join(', ')}]`);
 
-    // Inputs del gamepad
     socket.on('input', (data) => {
       const inputs = inputsActivos.get(socket.id);
       if (!inputs) return;
-      if (data.estado === 'presionado') {
-        inputs.add(data.direccion);
-      } else {
-        inputs.delete(data.direccion);
-      }
+      if (data.estado === 'presionado') inputs.add(data.direccion);
+      else                              inputs.delete(data.direccion);
     });
 
-    // Desconexión: liberar slot y limpiar
     socket.on('disconnect', () => {
-      const jugador = estado.jugadores.get(socket.id) as any;
-      if (!jugador) return;
+      const j = estado.jugadores.get(socket.id) as JugadorInterno | undefined;
+      if (!j) return;
 
-      console.log(`❌ ${jugador.nombre} desconectado`);
+      console.log(`❌ ${j.nombre} desconectado`);
 
-      Matter.World.remove(motor.mundo, jugador.cuerpofisico);
+      // Si tenía la llave, reaparecerla
+      if (j.cargandoLlave) {
+        reaparecerLlave();
+        io.emit('llave-reaparecio');
+      }
+
+      Matter.World.remove(motor.mundo, j.cuerpofisico);
       estado.jugadores.delete(socket.id);
       inputsActivos.delete(socket.id);
 
-      slotsLibres.push(jugador.slotIndex);
+      // Devolver slot al pool, ordenado
+      slotsLibres.push(j.slotIndex);
       slotsLibres.sort((a, b) => a - b);
 
-      console.log(`   Slots libres ahora: [${slotsLibres.join(', ')}]`);
-
-      io.emit('jugador-desconectado', { id: socket.id, nombre: jugador.nombre });
+      console.log(`   Slots libres: [${slotsLibres.join(', ')}]`);
+      io.emit('jugador-desconectado', { id: socket.id, nombre: j.nombre });
     });
   });
 
@@ -192,39 +256,16 @@ export function iniciarServidorWS(
   });
 }
 
-// Victoria 
-function verificarVictoria(
-  estado: any,
-  motor:  any,
-  nivel:  any,
-  io:     IOServer,
-) {
-  if (!estado.llaveEnJuego) return;
-  if (estado.fase === 'nivel-completado') return;
-
-  const puerta    = nivel.posicionPuerta;
-  const jugadores = [...estado.jugadores.values()];
-
-  const enSalida = jugadores.filter((j: any) => {
-    const dx = Math.abs(j.cuerpofisico.position.x - puerta.x);
-    const dy = Math.abs(j.cuerpofisico.position.y - puerta.y);
-    return dx < 80 && dy < 80;
-  });
-
-  if (enSalida.length >= MIN_PARA_GANAR) {
-    estado.fase = 'nivel-completado';
-    io.emit('nivel-completado', { nivel: estado.nivelActual });
-    console.log('🎉 Nivel completado!');
-  }
-}
-
-// Snapshot para el cliente 
-function construirSnapshot(estado: any) {
+// Snapshot:
+function construirSnapshot(estado: any, cuerpoLlave: Matter.Body | null) {
   return {
     fase:          estado.fase,
     nivelActual:   estado.nivelActual,
     llaveEnJuego:  estado.llaveEnJuego,
     llaveRecogida: estado.llaveRecogida,
+    // posición de la llave para dibujarla en el canvas
+    llaveX: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.x : null,
+    llaveY: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.y : null,
     jugadores: [...estado.jugadores.values()].map((j: any) => ({
       id:            j.id,
       nombre:        j.nombre,

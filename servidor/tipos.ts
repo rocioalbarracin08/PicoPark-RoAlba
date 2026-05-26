@@ -9,6 +9,7 @@ export interface Jugador {
   cuerpofisico:  Matter.Body;
   cargandoLlave: boolean;
   conectado:     boolean;
+  slotIndex:     number;  
 }
 
 export interface EstadoJuego {
@@ -21,13 +22,13 @@ export interface EstadoJuego {
 
 export const CONFIGS_JUGADORES = [
   { color: '#85bdd8', nombre: 'Jugador 1' },
-  { color: '#ce93d8c9', nombre: 'Jugador 2' },
+  { color: '#ce93d8', nombre: 'Jugador 2' },
   { color: '#b85656', nombre: 'Jugador 3' },
   { color: '#fddcab', nombre: 'Jugador 4' },
 ] as const;
 
 export const MAX_JUGADORES     = 4;
-export const MIN_PARA_GANAR    = 3; //cant. mínima de jugadores para ganar el nivel
+export const MIN_PARA_GANAR    = 3; 
 
 export function crearEstadoInicial(): EstadoJuego {
   return {
