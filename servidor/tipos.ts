@@ -31,10 +31,10 @@ export const MIN_PARA_GANAR    = 3; //cant. mínima de jugadores para ganar el n
 
 export function crearEstadoInicial(): EstadoJuego {
   return {
-    fase:          'esperando',
+    fase:          'jugando',
     nivelActual:   1,
     jugadores:     new Map(),
     llaveRecogida: false,
-    llaveEnJuego:  true,
+    llaveEnJuego:  false,
   };
 }

@@ -3,7 +3,7 @@
     "name": "PicoPark Gamepad",
     "slug": "picopark-gamepad",
     "version": "1.0.0",
-    "orientation": "default",
+    "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "platforms": ["android", "ios"],
     "plugins": [

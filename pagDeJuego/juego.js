@@ -9,9 +9,12 @@ const pantallaVictoria = document.getElementById('pantalla-victoria');
 const SERVIDOR_URL = `http://${window.location.hostname}:3000`;
 const socket = io(SERVIDOR_URL, {
   query: { tipo: 'pantalla' },
+
+  transports: ['websocket'],
+
   reconnection: true,
-  reconnectionDelay: 1000,
-  reconnectionAttempts: 10,
+  reconnectionDelay: 2000,
+  reconnectionAttempts: Infinity,
 });
 
 let estadoActual = null;
@@ -25,7 +28,7 @@ socket.on('disconnect', () => {
   elEstado.textContent = '🔴 Desconectado';
 });
 
-// ── Recibir estado del servidor ───────────────────────────────────────────
+// Recibir estado del servidor 
 socket.on('estado', (data) => {
   estadoActual = data;
   elContador.textContent = `Jugadores: ${data.jugadores.length}/4`;

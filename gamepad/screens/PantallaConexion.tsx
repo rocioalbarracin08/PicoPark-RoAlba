@@ -29,7 +29,7 @@ export function PantallaConexion({ onConectado }: Props) {
 
     return limpio.includes(':')
       ? limpio
-      : `${limpio}:3000`;
+      : `${limpio}`;
   }
 
   function conectar(ipTexto: string) {
@@ -44,18 +44,20 @@ export function PantallaConexion({ onConectado }: Props) {
     yaConecto.current = false;
 
     const socket = io(url, {
-      reconnection:         true,
-      reconnectionDelay:    1000,
-      reconnectionAttempts: 10,
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      timeout: 10000,
     });
 
     socket.on('bienvenido', (info: InfoJugador) => {
       if (yaConecto.current) return;
       yaConecto.current = true;
-      // NO desconectamos — pasamos el socket vivo a PantallaGamepad
       socket.off('bienvenido');
       socket.off('partida-llena');
       socket.off('connect_error');
+      socket.io.opts.reconnection = true;
       setConectando(false);
       onConectado(url, info, socket);
     });
@@ -66,11 +68,22 @@ export function PantallaConexion({ onConectado }: Props) {
       Alert.alert('Partida llena', 'Ya hay 4 jugadores. Esperá a que haya lugar.');
     });
 
-    socket.on('connect_error', () => {
+    socket.on('connect_error', (err) => {
       if (yaConecto.current) return;
+      yaConecto.current = true;  // ← marcar como "ya manejado" (no solo en éxito)
+
+      console.log('❌ Error conexión:', err.message);
       setConectando(false);
       socket.disconnect();
-      Alert.alert('Sin conexión', `No hay servidor en ${host}.\nVerificá la IP e intentá de nuevo.`);
+
+      Alert.alert(
+        'Sin conexión',
+        `No hay servidor en ${host}.\nVerificá la IP e intentá de nuevo.`
+      );
+    });
+
+    socket.on('error', (err) => {
+      console.log('❌ Error con socket:', err);
     });
 
     setTimeout(() => {
@@ -125,11 +138,9 @@ export function PantallaConexion({ onConectado }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.inner}>
-        <Text style={styles.titulo}>🎮 PicoPark</Text>
-        <Text style={styles.subtitulo}>Gamepad</Text>
+        <Text style={styles.subtitulo}>Gamepad - PicoPark</Text>
 
         <TouchableOpacity style={styles.botonQR} onPress={abrirQR} disabled={conectando}>
-          <Text style={styles.botonQRIcono}>📷</Text>
           <Text style={styles.botonQRTexto}>Escanear QR del juego</Text>
         </TouchableOpacity>
 
@@ -139,19 +150,26 @@ export function PantallaConexion({ onConectado }: Props) {
           style={styles.input}
           value={ip}
           onChangeText={setIp}
-          placeholder="192.168.1.5"
+          placeholder="por ej: 192.168.1.5:3000"
           placeholderTextColor="#555"
-          keyboardType="numeric"
+          keyboardType="url"
           autoCapitalize="none"
           autoCorrect={false}
           editable={!conectando}
-          onSubmitEditing={() => conectar(ip)}
+          onSubmitEditing={() => {
+            if (ip.trim()) {
+              conectar(ip);
+            }
+          }}
         />
 
         <TouchableOpacity
-          style={[styles.botonConectar, conectando && styles.botonDeshabilitado]}
+          style={[
+            styles.botonConectar,
+            (conectando || !ip.trim()) && styles.botonDeshabilitado
+          ]}
           onPress={() => conectar(ip)}
-          disabled={conectando}
+          disabled={conectando || !ip.trim()}
         >
           {conectando
             ? <ActivityIndicator color="#1a1a2e" />
@@ -159,10 +177,6 @@ export function PantallaConexion({ onConectado }: Props) {
           }
         </TouchableOpacity>
 
-        <Text style={styles.ayuda}>
-          El servidor corre en el puerto 3000.{'\n'}
-          Ej: 192.168.1.5  →  se conecta a 192.168.1.5:3000
-        </Text>
       </View>
     </KeyboardAvoidingView>
   );
@@ -221,9 +235,9 @@ const styles = StyleSheet.create({
     paddingVertical:   16,
     paddingHorizontal: 16,
     color:             '#e0e0ff',
-    fontSize:          22,
+    fontSize:          16,
     textAlign:         'center',
-    letterSpacing:     3,
+    letterSpacing:     2,
     borderWidth:       1.5,
     borderColor:       '#2a2a5e',
   },
@@ -245,12 +259,6 @@ const styles = StyleSheet.create({
     fontSize:      17,
     fontWeight:    'bold',
     letterSpacing: 1,
-  },
-  ayuda: {
-    color:      '#333',
-    fontSize:   11,
-    textAlign:  'center',
-    lineHeight: 18,
   },
   qrOverlay: {
     ...StyleSheet.absoluteFillObject,
