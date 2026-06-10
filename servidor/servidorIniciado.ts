@@ -1,6 +1,6 @@
 import os from 'os';
 import qrcode from 'qrcode-terminal';
-import { iniciarServidorWS } from './servidor-ws';
+import { iniciarServidorWS } from './red';
 
 const PUERTO = 3000;
 

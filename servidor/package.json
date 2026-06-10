@@ -2,14 +2,15 @@
   "name": "picopark-servidor",
   "version": "1.0.0",
   "scripts": {
-    "dev": "bun --watch index.ts",
-    "start": "bun index.ts"
+    "dev": "bun --watch servidorIniciado.ts",
+    "start": "bun servidorIniciado.ts"
   },
   "dependencies": {
     "matter-js": "^0.20.0",
     "qrcode-terminal": "^0.12.0",
     "socket.io": "^4.7.5",
-    "socket.io-client": "^4.7.5"
+    "socket.io-client": "^4.7.5",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/bun": "^1.3.13",

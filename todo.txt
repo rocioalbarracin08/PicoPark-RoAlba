@@ -1,0 +1,1666 @@
+
+===== ./gamepad/App.tsx =====
+
+import React, { useState, useRef } from 'react';
+import { View, StyleSheet } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { PantallaConexion } from './screens/PantallaConexion';
+import { PantallaGamepad } from './screens/PantallaGamepad';
+import { Socket } from 'socket.io-client';
+
+export type InfoJugador = {
+  id:     string;
+  nombre: string;
+  color:  string;
+};
+
+export default function App() {
+  const [servidorUrl, setServidorUrl]   = useState<string | null>(null);
+  const [infoJugador, setInfoJugador]   = useState<InfoJugador | null>(null);
+  const socketRef                       = useRef<Socket | null>(null);
+
+  function handleConectado(url: string, info: InfoJugador, socket: Socket) {
+    socketRef.current = socket;
+    setServidorUrl(url);
+    setInfoJugador(info);
+  }
+
+  function handleDesconectar() {
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    setServidorUrl(null);
+    setInfoJugador(null);
+  }
+
+  return (
+    <View style={styles.contenedor}>
+      <StatusBar style="light" />
+      {!servidorUrl || !infoJugador ? (
+        <PantallaConexion onConectado={handleConectado} />
+      ) : (
+        <PantallaGamepad
+          socket={socketRef.current!}
+          infoJugador={infoJugador}
+          onDesconectar={handleDesconectar}
+        />
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  contenedor: {
+    flex:            1,
+    backgroundColor: '#1a1a2e',
+  },
+});
+===== ./gamepad/screens/PantallaConectarAlJuego.tsx =====
+
+import React, { useState, useRef } from 'react';
+import {
+  View, Text, TextInput, TouchableOpacity,
+  StyleSheet, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform,
+} from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { io, Socket } from 'socket.io-client';
+import type { InfoJugador } from '../App';
+
+interface Props {
+  onConectado: (url: string, info: InfoJugador, socket: Socket) => void;
+}
+
+export function PantallaConexion({ onConectado }: Props) {
+  const [ip, setIp]                     = useState('');
+  const [conectando, setConectando]     = useState(false);
+  const [modoQR, setModoQR]             = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const yaConecto                       = useRef(false);
+
+  function extraerHost(texto: string): string {
+    const limpio = texto
+      .trim()
+      .replace(/^https?:\/\//, '')
+      .split('/')[0];
+
+    if (!limpio) return '';
+
+    return limpio.includes(':')
+      ? limpio
+      : `${limpio}`;
+  }
+
+  function conectar(ipTexto: string) {
+    const host = extraerHost(ipTexto.trim());
+    if (!host) {
+      Alert.alert('Error', 'Ingresá una IP válida, ej: 192.168.1.5');
+      return;
+    }
+
+    const url = `http://${host}`;
+    setConectando(true);
+    yaConecto.current = false;
+
+    const socket = io(url, {
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      timeout: 10000,
+    });
+
+    socket.on('bienvenido', (info: InfoJugador) => {
+      if (yaConecto.current) return;
+      yaConecto.current = true;
+      socket.off('bienvenido');
+      socket.off('partida-llena');
+      socket.off('connect_error');
+      socket.io.opts.reconnection = true;
+      setConectando(false);
+      onConectado(url, info, socket);
+    });
+
+    socket.on('partida-llena', () => {
+      setConectando(false);
+      socket.disconnect();
+      Alert.alert('Partida llena', 'Ya hay 4 jugadores. Esperá a que haya lugar.');
+    });
+
+    socket.on('connect_error', (err) => {
+      if (yaConecto.current) return;
+      yaConecto.current = true;  // ← marcar como "ya manejado" (no solo en éxito)
+
+      console.log('❌ Error conexión:', err.message);
+      setConectando(false);
+      socket.disconnect();
+
+      Alert.alert(
+        'Sin conexión',
+        `No hay servidor en ${host}.\nVerificá la IP e intentá de nuevo.`
+      );
+    });
+
+    socket.on('error', (err) => {
+      console.log('❌ Error con socket:', err);
+    });
+
+    setTimeout(() => {
+      if (!yaConecto.current) {
+        socket.disconnect();
+        setConectando(false);
+        Alert.alert('Sin respuesta', 'El servidor no respondió. Verificá que el juego esté corriendo.');
+      }
+    }, 5000);
+  }
+
+  async function abrirQR() {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) {
+        Alert.alert('Permiso denegado', 'Necesitamos la cámara para escanear el QR.');
+        return;
+      }
+    }
+    setModoQR(true);
+  }
+
+  function onQREscaneado({ data }: { data: string }) {
+    if (conectando) return;
+    setModoQR(false);
+    setIp(data);
+    conectar(data);
+  }
+
+  if (modoQR) {
+    return (
+      <View style={styles.contenedor}>
+        <CameraView
+          style={StyleSheet.absoluteFill}
+          onBarcodeScanned={onQREscaneado}
+          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+        />
+        <View style={styles.qrOverlay}>
+          <View style={styles.qrMarco} />
+          <Text style={styles.qrTexto}>Apuntá al QR del juego</Text>
+          <TouchableOpacity style={styles.botonCancelar} onPress={() => setModoQR(false)}>
+            <Text style={styles.botonCancelarTexto}>Cancelar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.contenedor}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <View style={styles.inner}>
+        <Text style={styles.subtitulo}>Gamepad - PicoPark</Text>
+
+        <TouchableOpacity style={styles.botonQR} onPress={abrirQR} disabled={conectando}>
+          <Text style={styles.botonQRTexto}>Escanear QR del juego</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.separador}>— o ingresá la IP manualmente —</Text>
+
+        <TextInput
+          style={styles.input}
+          value={ip}
+          onChangeText={setIp}
+          placeholder="por ej: 192.168.1.5:3000"
+          placeholderTextColor="#555"
+          keyboardType="url"
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!conectando}
+          onSubmitEditing={() => {
+            if (ip.trim()) {
+              conectar(ip);
+            }
+          }}
+        />
+
+        <TouchableOpacity
+          style={[
+            styles.botonConectar,
+            (conectando || !ip.trim()) && styles.botonDeshabilitado
+          ]}
+          onPress={() => conectar(ip)}
+          disabled={conectando || !ip.trim()}
+        >
+          {conectando
+            ? <ActivityIndicator color="#1a1a2e" />
+            : <Text style={styles.botonConectarTexto}>Conectar</Text>
+          }
+        </TouchableOpacity>
+
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  contenedor: {
+    flex:            1,
+    backgroundColor: '#0f0f1e',
+  },
+  inner: {
+    flex:              1,
+    justifyContent:    'center',
+    alignItems:        'center',
+    paddingHorizontal: 28,
+    gap:               14,
+  },
+  titulo: {
+    fontSize:      48,
+    fontWeight:    'bold',
+    color:         '#85bdd8',
+    letterSpacing: 2,
+  },
+  subtitulo: {
+    fontSize:     13,
+    color:        '#556',
+    marginTop:    -10,
+    marginBottom: 8,
+    letterSpacing: 4,
+    textTransform: 'uppercase',
+  },
+  botonQR: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    backgroundColor:   '#151528',
+    borderRadius:      14,
+    paddingVertical:   16,
+    paddingHorizontal: 24,
+    gap:               12,
+    width:             '100%',
+    justifyContent:    'center',
+    borderWidth:       1.5,
+    borderColor:       '#85bdd8',
+  },
+  botonQRIcono: { fontSize: 22 },
+  botonQRTexto: { color: '#85bdd8', fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
+  separador: {
+    color:         '#333',
+    fontSize:      12,
+    letterSpacing: 1,
+  },
+  input: {
+    width:             '100%',
+    backgroundColor:   '#151528',
+    borderRadius:      12,
+    paddingVertical:   16,
+    paddingHorizontal: 16,
+    color:             '#e0e0ff',
+    fontSize:          16,
+    textAlign:         'center',
+    letterSpacing:     2,
+    borderWidth:       1.5,
+    borderColor:       '#2a2a5e',
+  },
+  botonConectar: {
+    width:           '100%',
+    backgroundColor: '#85bdd8',
+    borderRadius:    12,
+    paddingVertical: 16,
+    alignItems:      'center',
+    shadowColor:     '#85bdd8',
+    shadowOffset:    { width: 0, height: 4 },
+    shadowOpacity:   0.3,
+    shadowRadius:    8,
+    elevation:       6,
+  },
+  botonDeshabilitado: { opacity: 0.5 },
+  botonConectarTexto: {
+    color:         '#0f0f1e',
+    fontSize:      17,
+    fontWeight:    'bold',
+    letterSpacing: 1,
+  },
+  qrOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent:  'center',
+    alignItems:      'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  qrMarco: {
+    width:           250,
+    height:          250,
+    borderWidth:     3,
+    borderColor:     '#85bdd8',
+    borderRadius:    16,
+    backgroundColor: 'transparent',
+  },
+  qrTexto: {
+    color:           '#e0e0ff',
+    fontSize:        15,
+    marginTop:       24,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius:    10,
+  },
+  botonCancelar: {
+    marginTop:         20,
+    backgroundColor:   'rgba(0,0,0,0.8)',
+    paddingVertical:   12,
+    paddingHorizontal: 32,
+    borderRadius:      10,
+    borderWidth:       1,
+    borderColor:       '#444',
+  },
+  botonCancelarTexto: { color: '#aaa', fontSize: 15 },
+});
+===== ./gamepad/screens/ControlesJugador.tsx =====
+
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+} from 'react-native';
+
+import { useKeepAwake } from 'expo-keep-awake';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import { Socket } from 'socket.io-client';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import type { InfoJugador } from '../App';
+
+interface Props {
+  socket: Socket;
+  infoJugador: InfoJugador;
+  onDesconectar: () => void;
+}
+
+type Direccion =
+  | 'izquierda'
+  | 'derecha'
+  | 'salto'
+  | 'arriba'
+  | 'abajo';
+
+const BTN = 72;
+const BTN_SALTO = 110;
+
+export function PantallaGamepad({
+  socket,
+  infoJugador,
+  onDesconectar,
+}: Props) {
+
+  useKeepAwake();
+
+  const [conectado, setConectado] = useState(socket.connected);
+  const [fase, setFase] = useState('jugando');
+
+  const presionados = useRef<Set<Direccion>>(new Set());
+
+  useEffect(() => {
+    ScreenOrientation.lockAsync(
+      ScreenOrientation.OrientationLock.LANDSCAPE
+    );
+
+    return () => {
+      ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+
+    const onConnect = () => setConectado(true);
+    const onDisconnect = () => setConectado(false);
+
+    const onEstado = (data: { fase: string }) => {
+      setFase(data.fase);
+    };
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('estado', onEstado);
+
+    return () => {
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('estado', onEstado);
+    };
+
+  }, [socket, onDesconectar]);
+
+  const presionar = useCallback((dir: Direccion) => {
+
+    if (presionados.current.has(dir)) {
+      return;
+    }
+
+    presionados.current.add(dir);
+
+    socket.emit('input', {
+      direccion: dir,
+      estado: 'presionado',
+    });
+
+  }, [socket]);
+
+  const soltar = useCallback((dir: Direccion) => {
+
+    if (!presionados.current.has(dir)) {
+      return;
+    }
+
+    presionados.current.delete(dir);
+
+    socket.emit('input', {
+      direccion: dir,
+      estado: 'soltado',
+    });
+
+  }, [socket]);
+
+  const ledColor = conectado
+    ? '#00ff88'
+    : '#ff4444';
+
+  return (
+    <SafeAreaView style={styles.contenedor}>
+
+      <View style={styles.barra}>
+
+        <View style={styles.ledRow}>
+          <View
+            style={[
+              styles.led,
+              { backgroundColor: ledColor },
+            ]}
+          />
+
+          <Text style={styles.ledTexto}>
+            {conectado
+              ? 'Conectado'
+              : 'Sin conexión'}
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.nombreTag,
+            {
+              backgroundColor: infoJugador.color + '33',
+              borderColor: infoJugador.color,
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.nombreTexto,
+              { color: infoJugador.color },
+            ]}
+          >
+            {infoJugador.nombre}
+          </Text>
+        </View>
+
+        {fase === 'esperando' && (
+          <Text style={styles.faseTexto}>
+            ⏳ Esperando jugadores...
+          </Text>
+        )}
+
+        {fase === 'nivel-completado' && (
+          <Text
+            style={[
+              styles.faseTexto,
+              { color: '#00ff88' },
+            ]}
+          >
+            🎉 ¡Nivel completado!
+          </Text>
+        )}
+
+        <TouchableOpacity
+          style={styles.botonSalir}
+          onPress={onDesconectar}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.botonSalirTexto}>
+            Salir
+          </Text>
+        </TouchableOpacity>
+
+      </View>
+
+      <View
+        style={styles.controles}
+        pointerEvents="box-none"
+      >
+
+        <View style={styles.dpad}>
+
+          <View style={styles.filaDpad}>
+
+            <View style={{ width: BTN }} />
+
+            <TouchableOpacity
+              style={[styles.btnDir, styles.btnSecundario]}
+              onPressIn={() => presionar('arriba')}
+              onPressOut={() => soltar('arriba')}
+              activeOpacity={0.7}
+              delayLongPress={999999}
+            >
+              <Text style={styles.btnDirTexto}>
+                ▲
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ width: BTN }} />
+
+          </View>
+
+          <View style={styles.filaDpad}>
+
+            <TouchableOpacity
+              style={styles.btnDir}
+              onPressIn={() => presionar('izquierda')}
+              onPressOut={() => soltar('izquierda')}
+              activeOpacity={0.7}
+              delayLongPress={999999}
+            >
+              <Text style={styles.btnDirTexto}>
+                ◀
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.btnDirCentro} />
+
+            <TouchableOpacity
+              style={styles.btnDir}
+              onPressIn={() => presionar('derecha')}
+              onPressOut={() => soltar('derecha')}
+              activeOpacity={0.7}
+              delayLongPress={999999}
+            >
+              <Text style={styles.btnDirTexto}>
+                ▶
+              </Text>
+            </TouchableOpacity>
+
+          </View>
+
+          <View style={styles.filaDpad}>
+
+            <View style={{ width: BTN }} />
+
+            <TouchableOpacity
+              style={[styles.btnDir, styles.btnSecundario]}
+              onPressIn={() => presionar('abajo')}
+              onPressOut={() => soltar('abajo')}
+              activeOpacity={0.7}
+              delayLongPress={999999}
+            >
+              <Text style={styles.btnDirTexto}>
+                ▼
+              </Text>
+            </TouchableOpacity>
+
+            <View style={{ width: BTN }} />
+
+          </View>
+
+        </View>
+
+        <TouchableOpacity
+          style={styles.btnSalto}
+          onPressIn={() => presionar('salto')}
+          onPressOut={() => soltar('salto')}
+          activeOpacity={0.8}
+          delayLongPress={999999}
+        >
+          <Text style={styles.btnSaltoLetra}>
+            A
+          </Text>
+
+          <Text style={styles.btnSaltoSub}>
+            SALTO
+          </Text>
+        </TouchableOpacity>
+
+      </View>
+
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+
+  contenedor: {
+    flex: 1,
+    backgroundColor: '#0f0f1e',
+  },
+
+  barra: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+
+    backgroundColor: '#1a1a2e',
+
+    borderBottomWidth: 1,
+    borderBottomColor: '#2a2a4e',
+  },
+
+  ledRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+
+  led: {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
+  },
+
+  ledTexto: {
+    color: '#888',
+    fontSize: 11,
+  },
+
+  nombreTag: {
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+
+  nombreTexto: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
+  faseTexto: {
+    color: 'white',
+    fontSize: 12,
+  },
+
+  botonSalir: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+
+    backgroundColor: '#2a2a4e',
+    borderRadius: 6,
+  },
+
+  botonSalirTexto: {
+    color: '#777',
+    fontSize: 11,
+  },
+
+  controles: {
+    flex: 1,
+
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+
+    paddingHorizontal: 40,
+    paddingVertical: 12,
+  },
+
+  dpad: {
+    alignItems: 'center',
+  },
+
+  filaDpad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  btnDir: {
+    width: BTN,
+    height: BTN,
+
+    borderRadius: 16,
+
+    backgroundColor: '#1e1e3a',
+
+    justifyContent: 'center',
+    alignItems: 'center',
+
+    borderWidth: 2,
+    borderColor: '#3a3a6e',
+  },
+
+  btnSecundario: {
+    opacity: 0.5,
+  },
+
+  btnDirCentro: {
+    width: BTN,
+    height: BTN,
+  },
+
+  btnDirTexto: {
+    color: 'white',
+    fontSize: 28,
+  },
+
+  btnSalto: {
+    width: BTN_SALTO,
+    height: BTN_SALTO,
+
+    borderRadius: 999,
+
+    backgroundColor: '#85bdd8',
+
+    justifyContent: 'center',
+    alignItems: 'center',
+
+    borderWidth: 3,
+    borderColor: '#b0d8ea',
+  },
+
+  btnSaltoLetra: {
+    fontSize: 42,
+    fontWeight: 'bold',
+    color: '#0f0f1e',
+  },
+
+  btnSaltoSub: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+
+    color: '#0f0f1e',
+  },
+
+});
+===== ./gamepad/babel.config.js =====
+
+module.exports = function(api) {
+  api.cache(true);
+  return {
+    presets: ['babel-preset-expo'],
+  };
+};
+===== ./gamepad/tsconfig.json =====
+
+{
+  "compilerOptions": {},
+  "extends": "expo/tsconfig.base"
+}
+
+===== ./gamepad/package.json =====
+
+{
+  "name": "picopark-gamepad",
+  "version": "1.0.0",
+  "main": "index.tsx",
+  "scripts": {
+    "dev": "expo start",
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios"
+  },
+  "dependencies": {
+    "expo": "~54.0.0",
+    "expo-camera": "~16.1.0",
+    "expo-keep-awake": "~14.1.0",
+    "expo-screen-orientation": "^56.0.5",
+    "expo-status-bar": "~2.2.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "^5.8.0",
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~19.1.10",
+    "typescript": "^5.3.0"
+  }
+}
+===== ./gamepad/.expo/devices.json =====
+
+{
+  "devices": []
+}
+
+===== ./gamepad/index.tsx =====
+
+import { registerRootComponent } from 'expo';
+import App from './App';
+registerRootComponent(App);
+===== ./gamepad/app.json =====
+
+{
+  "expo": {
+    "name": "PicoPark Gamepad",
+    "slug": "picopark-gamepad",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "platforms": ["android", "ios"],
+    "plugins": [
+      [
+        "expo-camera",
+        { "cameraPermission": "Necesitamos la cámara para escanear el QR del juego." }
+      ]
+    ],
+    "android": {
+      "adaptiveIcon": { "backgroundColor": "#1a1a2e" },
+      "package": "com.picopark.gamepad",
+      "usesCleartextTraffic": true
+    },
+    "ios": {
+      "supportsTablet": false
+    }
+  }
+}
+===== ./pagDeJuego/juego.js =====
+
+const canvas     = document.getElementById('canvas');
+const ctx        = canvas.getContext('2d');
+const elEstado   = document.getElementById('estado-conexion');
+const elContador = document.getElementById('contador-jugadores');
+const pantallaEspera   = document.getElementById('pantalla-espera');
+const pantallaVictoria = document.getElementById('pantalla-victoria');
+
+//Conectarse al servidor (misma IP, puerto 3000)
+const SERVIDOR_URL = `http://${window.location.hostname}:3000`;
+const socket = io(SERVIDOR_URL, {
+  query: { tipo: 'pantalla' },
+
+  transports: ['websocket'],
+
+  reconnection: true,
+  reconnectionDelay: 2000,
+  reconnectionAttempts: Infinity,
+});
+
+let estadoActual = null;
+let nivelActual  = null;
+
+socket.on('connect', () => {
+  elEstado.textContent = '🟢 Conectado';
+});
+
+socket.on('disconnect', () => {
+  elEstado.textContent = '🔴 Desconectado';
+});
+
+// Recibir estado del servidor 
+socket.on('estado', (data) => {
+  estadoActual = data;
+  elContador.textContent = `Jugadores: ${data.jugadores.length}/4`;
+
+  if (data.fase === 'esperando') {
+    pantallaEspera.classList.remove('oculto');
+    pantallaVictoria.classList.add('oculto');
+  } else if (data.fase === 'nivel-completado') {
+    pantallaVictoria.classList.remove('oculto');
+    pantallaEspera.classList.add('oculto');
+  } else {
+    pantallaEspera.classList.add('oculto');
+    pantallaVictoria.classList.add('oculto');
+  }
+});
+
+socket.on('jugador-desconectado', ({ nombre }) => {
+  console.log(`${nombre} se desconectó`);
+});
+
+function ajustarCanvas() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', ajustarCanvas);
+ajustarCanvas();
+
+function escalar(valor, base, tamaño) {
+  return (valor / base) * tamaño;
+}
+
+function dibujar() {
+  requestAnimationFrame(dibujar);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!estadoActual) return;
+
+  const nivel = estadoActual.nivelActual === 1
+    ? { ancho: 1200, alto: 600, plataformas: [
+        { x: 600,  y: 580, ancho: 1200, alto: 20 },
+        { x: 400,  y: 420, ancho: 200,  alto: 20 },
+        { x: 900,  y: 300, ancho: 200,  alto: 20 },
+        { x: 0,    y: 300, ancho: 20,   alto: 600 },
+        { x: 1200, y: 300, ancho: 20,   alto: 600 },
+      ], puerta: { x: 1150, y: 520 } }
+    : { ancho: 800, alto: 700, plataformas: [
+        { x: 400, y: 680, ancho: 800, alto: 20 },
+        { x: 200, y: 300, ancho: 160, alto: 20 },
+        { x: 650, y: 500, ancho: 200, alto: 20 },
+        { x: 0,   y: 350, ancho: 20,  alto: 700 },
+        { x: 800, y: 350, ancho: 20,  alto: 700 },
+      ], puerta: { x: 650, y: 450 } };
+
+  const sx = canvas.width  / nivel.ancho;
+  const sy = canvas.height / nivel.alto;
+
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#4a4a6a';
+  for (const p of nivel.plataformas) {
+    ctx.fillRect(
+      (p.x - p.ancho / 2) * sx,
+      (p.y - p.alto  / 2) * sy,
+      p.ancho * sx,
+      p.alto  * sy
+    );
+  }
+
+  ctx.fillStyle = estadoActual.llaveRecogida ? '#00ff88' : '#555';
+  ctx.fillRect(
+    (nivel.puerta.x - 30) * sx,
+    (nivel.puerta.y - 40) * sy,
+    60 * sx,
+    80 * sy
+  );
+  ctx.fillStyle = 'white';
+  ctx.font = `${20 * Math.min(sx, sy)}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText(
+    estadoActual.llaveRecogida ? '🚪' : '🔒',
+    nivel.puerta.x * sx,
+    (nivel.puerta.y + 10) * sy
+  );
+
+  // Llave (solo si está en el mundo)
+  if (estadoActual.llaveEnJuego && estadoActual.llaveX != null) {
+    ctx.font = `${24 * Math.min(sx, sy)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('🗝️', estadoActual.llaveX * sx, estadoActual.llaveY * sy);
+  }
+
+  // Jugadores
+  for (const j of estadoActual.jugadores) {
+    const jx = j.x * sx;
+    const jy = j.y * sy;
+    const w  = 40 * sx;
+    const h  = 60 * sy;
+
+    ctx.fillStyle = j.color;
+    ctx.beginPath();
+    ctx.roundRect(jx - w/2, jy - h/2, w, h, 6);
+    ctx.fill();
+
+    ctx.fillStyle = 'white';
+    ctx.font = `bold ${11 * Math.min(sx, sy)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(j.nombre.split(' ')[1], jx, jy - h/2 - 5 * sy);
+
+    if (j.cargandoLlave) {
+      ctx.font = `${16 * Math.min(sx, sy)}px monospace`;
+      ctx.fillText('🗝️', jx, jy);
+    }
+  }
+}
+
+dibujar();
+===== ./pagDeJuego/estilos.css =====
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #1a1a2e;
+  overflow: hidden;
+  font-family: monospace;
+  color: white;
+}
+
+#info-conexion {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  display: flex;
+  gap: 20px;
+  font-size: 14px;
+  background: rgba(0,0,0,0.5);
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+
+#mundo {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+#canvas {
+  display: block;
+}
+
+.oculto { display: none !important; }
+
+#pantalla-espera,
+#pantalla-victoria {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 24px;
+  text-align: center;
+}
+===== ./servidor/configuracionJugadores.ts =====
+
+import type Matter from 'matter-js';
+
+export type FaseJuego = 'esperando' | 'jugando' | 'nivel-completado';
+
+export interface Jugador {
+  id:            string;
+  nombre:        string;
+  color:         string;
+  cuerpofisico:  Matter.Body;
+  cargandoLlave: boolean;
+  conectado:     boolean;
+  slotIndex:     number;  
+}
+
+export interface EstadoJuego {
+  fase:          FaseJuego;
+  nivelActual:   number;
+  jugadores:     Map<string, Jugador>;
+  llaveRecogida: boolean;
+  llaveEnJuego:  boolean;
+}
+
+export const CONFIGS_JUGADORES = [
+  { color: '#85bdd8', nombre: 'Jugador 1' },
+  { color: '#ce93d8', nombre: 'Jugador 2' },
+  { color: '#b85656', nombre: 'Jugador 3' },
+  { color: '#fddcab', nombre: 'Jugador 4' },
+] as const;
+
+export const MAX_JUGADORES     = 4;
+export const MIN_PARA_GANAR    = 3; 
+
+export function crearEstadoInicial(): EstadoJuego {
+  return {
+    fase:          'jugando',
+    nivelActual:   1,
+    jugadores:     new Map(),
+    llaveRecogida: false,
+    llaveEnJuego:  false,
+  };
+}
+===== ./servidor/red.ts =====
+
+import { Server as IOServer, Socket } from 'socket.io';
+import { createServer } from 'http';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import Matter from 'matter-js';
+
+import {
+  crearMotorFisico,
+  crearCuerpoJugador,
+  aplicarMovimiento,
+  estaEnSuelo,
+  avanzarMotor,
+} from './fisica';
+
+import { NIVELES } from './configuracionNiveles';
+
+import {
+  crearEstadoInicial,
+  CONFIGS_JUGADORES,
+  MAX_JUGADORES,
+  MIN_PARA_GANAR,
+} from './configuracionJugadores';
+
+import type { Jugador } from './configuracionJugadores';
+
+const TICK_RATE = 1000 / 60;
+
+interface JugadorInterno extends Jugador {
+  slotIndex: number;
+}
+
+export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
+
+  // HTTP 
+  const httpServer = createServer((req, res) => {
+    const url = req.url ?? '/';
+    const mapa: Record<string, string> = {
+      '/': 'index.html',
+      '/index.html': 'index.html',
+      '/juego.js': 'juego.js',
+      '/estilos.css': 'estilos.css',
+    };
+    const tipos: Record<string, string> = {
+      'index.html': 'text/html',
+      'juego.js': 'application/javascript',
+      'estilos.css': 'text/css',
+    };
+    const archivo = mapa[url];
+    if (!archivo) { res.writeHead(404); res.end('404'); return; }
+    try {
+      const contenido = readFileSync(join(dirPagDeJuego, archivo));
+      res.writeHead(200, { 'Content-Type': tipos[archivo] });
+      res.end(contenido);
+    } catch {
+      res.writeHead(500); res.end('error');
+    }
+  });
+
+  const io = new IOServer(httpServer, {
+    cors: { origin: '*' },
+    transports: ['websocket'],
+    pingTimeout:  60000,
+    pingInterval: 25000,
+  });
+
+  const estado       = crearEstadoInicial();
+  const motor        = crearMotorFisico();
+  const nivelConfig  = NIVELES[estado.nivelActual - 1];
+  const inputsActivos = new Map<string, Set<string>>();
+  const slotsLibres: number[] = [0, 1, 2, 3];
+
+  for (const p of nivelConfig.plataformas) {
+    Matter.World.add(motor.mundo,
+      Matter.Bodies.rectangle(p.x, p.y, p.ancho, p.alto, {
+        isStatic: true,
+        label: p.etiqueta ?? 'plataforma',
+      })
+    );
+  }
+
+  let cuerpoLlave: Matter.Body | null = Matter.Bodies.circle(
+    nivelConfig.posicionLlave.x,
+    nivelConfig.posicionLlave.y,
+    18,
+    { isStatic: true, isSensor: true, label: 'llave' }
+  );
+  Matter.World.add(motor.mundo, cuerpoLlave);
+
+  function reaparecerLlave() {
+    if (!cuerpoLlave) return;
+    Matter.Body.setPosition(cuerpoLlave, {
+      x: nivelConfig.posicionLlave.x,
+      y: nivelConfig.posicionLlave.y,
+    });
+    estado.llaveEnJuego  = true;
+    estado.llaveRecogida = false;
+    for (const j of estado.jugadores.values()) {
+      j.cargandoLlave = false;
+    }
+  }
+
+  let ultimoTick = Date.now();
+
+  setInterval(() => {
+    const ahora = Date.now();
+    const delta = Math.min(ahora - ultimoTick, 50);
+    ultimoTick  = ahora;
+
+    for (const jugador of estado.jugadores.values()) {
+      const inputs  = inputsActivos.get(jugador.id) ?? new Set();
+      const enSuelo = estaEnSuelo(jugador.cuerpofisico, motor.motor);
+      aplicarMovimiento(jugador.cuerpofisico, inputs, enSuelo);
+    }
+
+    avanzarMotor(motor.motor, delta);
+
+    const cantJugadores = estado.jugadores.size;
+    if (cantJugadores < MIN_PARA_GANAR) {
+      if (estado.llaveEnJuego) {
+        estado.llaveEnJuego = false;
+      }
+    } else if (!estado.llaveEnJuego && !estado.llaveRecogida) {
+      estado.llaveEnJuego = true;
+    }
+
+    // Alguien agarra la llave 
+    if (estado.llaveEnJuego && !estado.llaveRecogida && cuerpoLlave) {
+      for (const jugador of estado.jugadores.values()) {
+        const dx = Math.abs(jugador.cuerpofisico.position.x - cuerpoLlave.position.x);
+        const dy = Math.abs(jugador.cuerpofisico.position.y - cuerpoLlave.position.y);
+        if (dx < 40 && dy < 50) {
+          jugador.cargandoLlave = true;
+          estado.llaveRecogida  = true;
+          estado.llaveEnJuego   = false;
+          io.emit('llave-recogida', { jugadorId: jugador.id, nombre: jugador.nombre });
+          console.log(`🗝️  ${jugador.nombre} agarró la llave`);
+          break;
+        }
+      }
+    }
+
+    for (const jugador of estado.jugadores.values()) {
+      if (jugador.cargandoLlave && jugador.cuerpofisico.position.y > nivelConfig.altoMundo + 100) {
+        console.log(`🗝️  ${jugador.nombre} cayó con la llave — reaparece`);
+        reaparecerLlave();
+        io.emit('llave-reaparecio');
+        break;
+      }
+    }
+
+
+if (estado.fase === 'jugando') {
+  const puerta    = nivelConfig.posicionPuerta;
+  const jugadores = [...estado.jugadores.values()];
+
+  // Jugadores que están cerca de la puerta Y presionando arriba
+  const entrando = jugadores.filter(j => {
+    const inputs = inputsActivos.get(j.id);
+    if (!inputs?.has('arriba')) return false;
+    const dx = Math.abs(j.cuerpofisico.position.x - puerta.x);
+    const dy = Math.abs(j.cuerpofisico.position.y - puerta.y);
+    return dx < 60 && dy < 80;
+  });
+
+  // Cuenta como "en salida" a quien entró con arriba (tiene llave) o está cerca
+  // La puerta solo abre si alguien con la llave la activa primero
+  const hayLlaveEnPuerta = entrando.some(j => j.cargandoLlave);
+
+  if (hayLlaveEnPuerta || estado.llaveRecogida) {
+    // Una vez que la llave llegó a la puerta, los demás también pueden entrar con arriba
+    if (entrando.length >= MIN_PARA_GANAR) {
+      estado.fase = 'nivel-completado';
+      io.emit('nivel-completado', { nivel: estado.nivelActual });
+      console.log(`Nivel ${estado.nivelActual} completado!`);
+    }
+  }
+}
+
+    io.emit('estado', construirSnapshot(estado, cuerpoLlave));
+
+  }, TICK_RATE);
+
+  // Conexiones 
+  io.on('connection', (socket: Socket) => {
+    const tipo = socket.handshake.query.tipo;
+
+    if (tipo === 'pantalla') {
+      console.log('🖥️ Pantalla conectada');
+      socket.on('disconnect', (r) => console.log(`🖥️ Pantalla desconectada (${r})`));
+      return;
+    }
+
+    // Gamepad: verificar slots
+    if (slotsLibres.length === 0) {
+      socket.emit('partida-llena'); 
+      socket.disconnect();
+      console.log(`🚫 Partida llena — rechazado (${socket.id})`);
+      return;
+    }
+
+    const slotIndex = slotsLibres.shift()!;
+    const config    = CONFIGS_JUGADORES[slotIndex];
+    const spawn     = nivelConfig.posicionesIniciales[slotIndex];
+    const cuerpo    = crearCuerpoJugador(spawn.x, spawn.y, socket.id);
+
+    Matter.World.add(motor.mundo, cuerpo);
+
+    const jugador: JugadorInterno = {
+      id:            socket.id,
+      nombre:        config.nombre,
+      color:         config.color,
+      cuerpofisico:  cuerpo,
+      conectado:     true,
+      cargandoLlave: false,
+      slotIndex,
+    };
+
+    estado.jugadores.set(socket.id, jugador);
+    inputsActivos.set(socket.id, new Set());
+
+    socket.emit('bienvenido', {
+      id:     socket.id,
+      nombre: config.nombre,
+      color:  config.color,
+    });
+
+    console.log(`✅ ${config.nombre} (slot ${slotIndex}) conectado — slots libres: [${slotsLibres.join(', ')}]`);
+
+    socket.on('input', (data) => {
+      const inputs = inputsActivos.get(socket.id);
+      if (!inputs) return;
+      if (data.estado === 'presionado') inputs.add(data.direccion);
+      else                              inputs.delete(data.direccion);
+    });
+
+    socket.on('disconnect', () => {
+      const j = estado.jugadores.get(socket.id) as JugadorInterno | undefined;
+      if (!j) return;
+
+      console.log(`❌ ${j.nombre} desconectado`);
+
+      // Si tenía la llave, reaparecerla
+      if (j.cargandoLlave) {
+        reaparecerLlave();
+        io.emit('llave-reaparecio');
+      }
+
+      Matter.World.remove(motor.mundo, j.cuerpofisico);
+      estado.jugadores.delete(socket.id);
+      inputsActivos.delete(socket.id);
+
+      // Devolver slot al pool, ordenado
+      slotsLibres.push(j.slotIndex);
+      slotsLibres.sort((a, b) => a - b);
+
+      console.log(`   Slots libres: [${slotsLibres.join(', ')}]`);
+      io.emit('jugador-desconectado', { id: socket.id, nombre: j.nombre });
+    });
+  });
+
+  httpServer.listen(puerto, '0.0.0.0', () => {
+    console.log(`Servidor escuchando en puerto ${puerto}`);
+  });
+}
+
+// Snapshot:
+function construirSnapshot(estado: any, cuerpoLlave: Matter.Body | null) {
+  return {
+    fase:          estado.fase,
+    nivelActual:   estado.nivelActual,
+    llaveEnJuego:  estado.llaveEnJuego,
+    llaveRecogida: estado.llaveRecogida,
+    // posición de la llave para dibujarla en el canvas
+    llaveX: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.x : null,
+    llaveY: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.y : null,
+    jugadores: [...estado.jugadores.values()].map((j: any) => ({
+      id:            j.id,
+      nombre:        j.nombre,
+      color:         j.color,
+      x:             j.cuerpofisico.position.x,
+      y:             j.cuerpofisico.position.y,
+      cargandoLlave: j.cargandoLlave,
+    })),
+  };
+}
+===== ./servidor/fisica.ts =====
+
+import Matter from 'matter-js';
+
+const {
+  Engine,
+  Bodies,
+  Body,
+  World,
+  Composite,
+} = Matter;
+
+export function crearMotorFisico() {
+
+  const motor = Engine.create({
+    gravity: {
+      x: 0,
+      y: 1.4,
+    },
+  });
+
+  return {
+    motor,
+    mundo: motor.world,
+  };
+}
+
+export function crearCuerpoJugador(
+  x: number,
+  y: number,
+  id: string,
+) {
+
+  return Bodies.rectangle(
+    x,
+    y,
+    40,
+    60,
+    {
+      label: `jugador-${id}`,
+
+      friction: 0,
+      frictionAir: 0,
+
+      inertia: Infinity,
+    }
+  );
+}
+
+export function aplicarMovimiento(
+  cuerpo: Matter.Body,
+  inputs: Set<string>,
+  enSuelo: boolean,
+) {
+
+  let vx = cuerpo.velocity.x;
+
+  // MOVIMIENTO
+  if (inputs.has('izquierda')) {
+    vx = -7;
+  }
+
+  if (inputs.has('derecha')) {
+    vx = 7;
+  }
+
+  if (
+    !inputs.has('izquierda')
+    &&
+    !inputs.has('derecha')
+  ) {
+    vx = 0;
+  }
+
+  if (
+    inputs.has('salto')
+    &&
+    enSuelo
+    &&
+    Math.abs(cuerpo.velocity.y) < 1
+  ) {
+
+    Body.setVelocity(cuerpo, {
+      x: vx,
+      y: -13,
+    });
+
+    return;
+  }
+
+  Body.setVelocity(cuerpo, {
+    x: vx,
+    y: cuerpo.velocity.y,
+  });
+}
+
+export function estaEnSuelo(
+  cuerpo: Matter.Body,
+  motor: Matter.Engine,
+) {
+
+  const todos =
+    Composite.allBodies(motor.world);
+
+  for (const otro of todos) {
+
+    if (otro === cuerpo) continue;
+
+    if (!otro.isStatic) continue;
+
+    const tocando =
+      cuerpo.bounds.max.y <= otro.bounds.min.y + 10
+      &&
+      cuerpo.bounds.max.y >= otro.bounds.min.y - 10
+      &&
+      cuerpo.bounds.max.x > otro.bounds.min.x
+      &&
+      cuerpo.bounds.min.x < otro.bounds.max.x;
+
+    if (tocando) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function avanzarMotor(
+  motor: Matter.Engine,
+  delta: number,
+) {
+  Engine.update(motor, delta);
+}
+===== ./servidor/configuracionNiveles.ts =====
+
+
+export interface Plataforma {
+  x: number;
+  y: number;
+  ancho: number;
+  alto: number;
+  etiqueta?: string;
+}
+
+export interface ConfigNivel {
+  numero: number;
+  nombre: string;
+  anchoMundo: number;
+  altoMundo: number;
+  plataformas: Plataforma[];
+  posicionesIniciales: { x: number; y: number }[];
+  posicionLlave: { x: number; y: number };
+  posicionPuerta: { x: number; y: number };
+  descripcion: string;
+}
+
+// Nivel 1: mapa simple
+export const NIVEL_1: ConfigNivel = {
+  numero: 1,
+  nombre: 'El Puente',
+  anchoMundo: 1200,
+  altoMundo: 600,
+  descripcion: 'Lleguen a la llave y lleven a todos a la salida.',
+  plataformas: [
+    { x: 600, y: 580, ancho: 1200, alto: 20, etiqueta: 'suelo' },
+    { x: 400, y: 420, ancho: 200, alto: 20, etiqueta: 'plataforma-media' },
+    { x: 900, y: 300, ancho: 200, alto: 20, etiqueta: 'plataforma-llave' },
+    { x: 0,    y: 300, ancho: 20, alto: 600, etiqueta: 'pared-izquierda' },
+    { x: 1200, y: 300, ancho: 20, alto: 600, etiqueta: 'pared-derecha' },
+  ],
+  posicionesIniciales: [
+    { x: 100, y: 500 },
+    { x: 150, y: 500 },
+    { x: 200, y: 500 },
+    { x: 250, y: 500 },
+  ],
+  posicionLlave:  { x: 900, y: 260 },
+  posicionPuerta: { x: 1150, y: 520 },
+};
+
+// Nivel 2: los jugadores deben apilarse para alcanzar la plataforma alta
+export const NIVEL_2: ConfigNivel = {
+  numero: 2,
+  nombre: 'La Torre',
+  anchoMundo: 800,
+  altoMundo: 700,
+  descripcion: 'Apílense para alcanzar la llave en las alturas.',
+  plataformas: [
+    { x: 400, y: 680, ancho: 800, alto: 20, etiqueta: 'suelo' },
+    { x: 200, y: 300, ancho: 160, alto: 20, etiqueta: 'plataforma-alta' },
+    { x: 650, y: 500, ancho: 200, alto: 20, etiqueta: 'plataforma-salida' },
+    { x: 0,   y: 350, ancho: 20, alto: 700, etiqueta: 'pared-izquierda' },
+    { x: 800, y: 350, ancho: 20, alto: 700, etiqueta: 'pared-derecha' },
+  ],
+  posicionesIniciales: [
+    { x: 200, y: 600 },
+    { x: 250, y: 600 },
+    { x: 300, y: 600 },
+    { x: 350, y: 600 },
+  ],
+  posicionLlave:  { x: 200, y: 260 },
+  posicionPuerta: { x: 650, y: 450 },
+};
+
+export const NIVELES: ConfigNivel[] = [NIVEL_1, NIVEL_2];
+===== ./servidor/tsconfig.json =====
+
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["bun-types"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}
+===== ./servidor/package.json =====
+
+{
+  "name": "picopark-servidor",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "bun --watch servidorIniciado.ts",
+    "start": "bun servidorIniciado.ts"
+  },
+  "dependencies": {
+    "matter-js": "^0.20.0",
+    "qrcode-terminal": "^0.12.0",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.13",
+    "@types/matter-js": "^0.20.2",
+    "@types/node": "^25.6.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/ws": "^8.5.10"
+  }
+}
+===== ./servidor/servidorIniciado.ts =====
+
+import os from 'os';
+import qrcode from 'qrcode-terminal';
+import { iniciarServidorWS } from './red';
+
+const PUERTO = 3000;
+
+function obtenerIPLocal(): string {
+  const interfaces = os.networkInterfaces();
+  for (const nombre of Object.keys(interfaces)) {
+    for (const iface of interfaces[nombre] ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
+
+const ip       = obtenerIPLocal();
+const urlJuego = `http://${ip}:${PUERTO}`;
+
+console.log('🎮 PicoPark - Servidor');
+console.log(`🌐 Página del juego: ${urlJuego}`);
+console.log('📱 Escaneá este QR:');
+qrcode.generate(urlJuego, { small: true });
+console.log('⏳ Esperando jugadores (0/4)...');
+
+iniciarServidorWS(PUERTO, `${import.meta.dir}/../pagDeJuego`);

@@ -10,22 +10,21 @@ import {
   aplicarMovimiento,
   estaEnSuelo,
   avanzarMotor,
-} from './motor';
+} from './fisica';
 
-import { NIVELES } from './niveles';
+import { NIVELES } from './configuracionNiveles';
 
 import {
   crearEstadoInicial,
   CONFIGS_JUGADORES,
   MAX_JUGADORES,
   MIN_PARA_GANAR,
-} from './tipos';
+} from './configuracionJugadores';
 
-import type { Jugador } from './tipos';
+import type { Jugador } from './configuracionJugadores';
 
 const TICK_RATE = 1000 / 60;
 
-// Extiende Jugador con el slot (para el pool de colores)
 interface JugadorInterno extends Jugador {
   slotIndex: number;
 }
@@ -57,7 +56,6 @@ export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
     }
   });
 
-  // Socket.IO 
   const io = new IOServer(httpServer, {
     cors: { origin: '*' },
     transports: ['websocket'],
@@ -71,7 +69,6 @@ export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
   const inputsActivos = new Map<string, Set<string>>();
   const slotsLibres: number[] = [0, 1, 2, 3];
 
-  //  Crear plataformas del nivel 
   for (const p of nivelConfig.plataformas) {
     Matter.World.add(motor.mundo,
       Matter.Bodies.rectangle(p.x, p.y, p.ancho, p.alto, {
@@ -97,7 +94,6 @@ export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
     });
     estado.llaveEnJuego  = true;
     estado.llaveRecogida = false;
-    // Liberar al jugador que la cargaba
     for (const j of estado.jugadores.values()) {
       j.cargandoLlave = false;
     }
@@ -152,22 +148,33 @@ export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
       }
     }
 
-    if (estado.llaveRecogida && estado.fase === 'jugando') {
-      const puerta    = nivelConfig.posicionPuerta;
-      const jugadores = [...estado.jugadores.values()];
 
-      const enSalida = jugadores.filter(j => {
-        const dx = Math.abs(j.cuerpofisico.position.x - puerta.x);
-        const dy = Math.abs(j.cuerpofisico.position.y - puerta.y);
-        return dx < 80 && dy < 80;
-      });
+if (estado.fase === 'jugando') {
+  const puerta    = nivelConfig.posicionPuerta;
+  const jugadores = [...estado.jugadores.values()];
 
-      if (enSalida.length >= MIN_PARA_GANAR) {
-        estado.fase = 'nivel-completado';
-        io.emit('nivel-completado', { nivel: estado.nivelActual });
-        console.log(`🎉 Nivel ${estado.nivelActual} completado!`);
-      }
+  // Jugadores que están cerca de la puerta Y presionando arriba
+  const entrando = jugadores.filter(j => {
+    const inputs = inputsActivos.get(j.id);
+    if (!inputs?.has('arriba')) return false;
+    const dx = Math.abs(j.cuerpofisico.position.x - puerta.x);
+    const dy = Math.abs(j.cuerpofisico.position.y - puerta.y);
+    return dx < 60 && dy < 80;
+  });
+
+  // Cuenta como "en salida" a quien entró con arriba (tiene llave) o está cerca
+  // La puerta solo abre si alguien con la llave la activa primero
+  const hayLlaveEnPuerta = entrando.some(j => j.cargandoLlave);
+
+  if (hayLlaveEnPuerta || estado.llaveRecogida) {
+    // Una vez que la llave llegó a la puerta, los demás también pueden entrar con arriba
+    if (entrando.length >= MIN_PARA_GANAR) {
+      estado.fase = 'nivel-completado';
+      io.emit('nivel-completado', { nivel: estado.nivelActual });
+      console.log(`Nivel ${estado.nivelActual} completado!`);
     }
+  }
+}
 
     io.emit('estado', construirSnapshot(estado, cuerpoLlave));
 
