@@ -2,29 +2,33 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <title>PicoPark</title>
-  <link rel="stylesheet" href="/estilos.css" />
+  <title>Pico Park</title>
+  <link rel="stylesheet" href="estilos.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
-  <div id="info-conexion">
-    <span id="estado-conexion">⚪ Conectando...</span>
-    <span id="contador-jugadores">Jugadores: 0/4</span>
-  </div>
+    <div id="zona-juego">
+      <div id="cabecera">
+        <span id="titulo">Pico Park</span>
+        <span id="contador-jugadores">Jugadores: 0/4</span>
+        <span id="estado-conexion">🔴 Desconectado</span>
+      </div>
 
-  <div id="mundo">
-    <canvas id="canvas"></canvas>
-  </div>
+      <canvas id="canvas"></canvas>
+    </div>
 
-  <div id="pantalla-espera" class="oculto">
-    <h2>⏳ Esperando jugadores...</h2>
-    <p>Mínimo 3 para que aparezca la llave</p>
-  </div>
+    <div id="panel-lateral">
+      <div id="panel-titulo">📱 Unirse</div>
+      <div id="info-ip">Cargando…</div>
+      <div id="qr-imagen"></div>
+      <div id="panel-instrucciones">
+        <p>Abrí la app y</p>
+        <p>escaneá el código QR</p>
+        <hr/>
+        <p id="texto-regla">Con +3 jugadores aparece la llave 🗝️</p>
+      </div>
+    </div>
 
-  <div id="pantalla-victoria" class="oculto">
-    <h2>🎉 ¡Nivel completado!</h2>
-  </div>
-
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-  <script src="/juego.js"></script>
+  <script src="juego.js"></script>
 </body>
 </html>

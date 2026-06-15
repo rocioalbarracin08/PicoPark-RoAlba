@@ -1,104 +1,119 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef }        from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, Alert, ActivityIndicator,
   KeyboardAvoidingView, Platform,
-} from 'react-native';
+}                                          from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { io, Socket } from 'socket.io-client';
+
 import type { InfoJugador } from '../App';
 
 interface Props {
-  onConectado: (url: string, info: InfoJugador, socket: Socket) => void;
+  onConectado: (info: InfoJugador, ws: WebSocket) => void;
 }
 
 export function PantallaConexion({ onConectado }: Props) {
   const [ip, setIp]                     = useState('');
   const [conectando, setConectando]     = useState(false);
   const [modoQR, setModoQR]             = useState(false);
-  const [permission, requestPermission] = useCameraPermissions();
-  const yaConecto                       = useRef(false);
+  const [permisoCam, pedirPermisoCam]   = useCameraPermissions();
 
-  function extraerHost(texto: string): string {
-    const limpio = texto
+  // Evita manejar la conexión dos veces si hay eventos simultáneos
+  const conexionManejada = useRef(false);
+
+  //Limpiar la IP ingresada 
+  function limpiarIP(texto: string): string {
+    return texto
       .trim()
-      .replace(/^https?:\/\//, '')
-      .split('/')[0];
-
-    if (!limpio) return '';
-
-    return limpio.includes(':')
-      ? limpio
-      : `${limpio}`;
+      .replace(/^https?:\/\//, '')  
+      .split('/')[0];              
   }
 
+  //Conectar al servidor 
   function conectar(ipTexto: string) {
-    const host = extraerHost(ipTexto.trim());
+    const host = limpiarIP(ipTexto);
+
     if (!host) {
-      Alert.alert('Error', 'Ingresá una IP válida, ej: 192.168.1.5');
+      Alert.alert('Error', 'Ingresá una IP válida, ej: 192.168.1.5:3000');
       return;
     }
 
-    const url = `http://${host}`;
+    const urlWS = `ws://${host}`;
     setConectando(true);
-    yaConecto.current = false;
+    conexionManejada.current = false;
 
-    const socket = io(url, {
-      transports: ['websocket'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      timeout: 10000,
-    });
-
-    socket.on('bienvenido', (info: InfoJugador) => {
-      if (yaConecto.current) return;
-      yaConecto.current = true;
-      socket.off('bienvenido');
-      socket.off('partida-llena');
-      socket.off('connect_error');
-      socket.io.opts.reconnection = true;
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(urlWS);
+    } catch {
       setConectando(false);
-      onConectado(url, info, socket);
-    });
+      Alert.alert('Error', 'URL inválida. Verificá la IP.');
+      return;
+    }
 
-    socket.on('partida-llena', () => {
-      setConectando(false);
-      socket.disconnect();
-      Alert.alert('Partida llena', 'Ya hay 4 jugadores. Esperá a que haya lugar.');
-    });
-
-    socket.on('connect_error', (err) => {
-      if (yaConecto.current) return;
-      yaConecto.current = true;  // ← marcar como "ya manejado" (no solo en éxito)
-
-      console.log('❌ Error conexión:', err.message);
-      setConectando(false);
-      socket.disconnect();
-
-      Alert.alert(
-        'Sin conexión',
-        `No hay servidor en ${host}.\nVerificá la IP e intentá de nuevo.`
-      );
-    });
-
-    socket.on('error', (err) => {
-      console.log('❌ Error con socket:', err);
-    });
-
-    setTimeout(() => {
-      if (!yaConecto.current) {
-        socket.disconnect();
+    const timerTimeout = setTimeout(() => {
+      if (!conexionManejada.current) {
+        conexionManejada.current = true;
+        ws.close();
         setConectando(false);
-        Alert.alert('Sin respuesta', 'El servidor no respondió. Verificá que el juego esté corriendo.');
+        Alert.alert('Sin respuesta', 'El servidor no respondió. ¿Está corriendo el juego?');
       }
-    }, 5000);
+    }, 6000);
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ tipo: 'gamepad' }));
+    };
+
+    ws.onmessage = (evento) => {
+      if (conexionManejada.current) return;
+
+      let mensaje: any;
+      try {
+        mensaje = JSON.parse(evento.data);
+      } catch {
+        return;
+      }
+
+      if (mensaje.tipo === 'bienvenido') {
+        conexionManejada.current = true;
+        clearTimeout(timerTimeout);
+        setConectando(false);
+
+        const info: InfoJugador = {
+          id:     mensaje.id,
+          nombre: mensaje.nombre,
+          color:  mensaje.color,
+        };
+        onConectado(info, ws);
+      }
+
+      if (mensaje.tipo === 'partida-llena') {
+        conexionManejada.current = true;
+        clearTimeout(timerTimeout);
+        ws.close();
+        setConectando(false);
+        Alert.alert('Partida llena', 'Ya hay 4 jugadores. Esperá a que haya lugar.');
+      }
+    };
+
+    ws.onerror = () => {
+      if (conexionManejada.current) return;
+      conexionManejada.current = true;
+      clearTimeout(timerTimeout);
+      setConectando(false);
+      Alert.alert('Sin conexión', `No se pudo conectar a ${host}.\nVerificá la IP e intentá de nuevo.`);
+    };
+
+    ws.onclose = () => {
+      clearTimeout(timerTimeout);
+    };
   }
 
-  async function abrirQR() {
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) {
+  //Abrir cámara para QR
+  async function abrirCamaraQR() {
+    if (!permisoCam?.granted) {
+      const resultado = await pedirPermisoCam();
+      if (!resultado.granted) {
         Alert.alert('Permiso denegado', 'Necesitamos la cámara para escanear el QR.');
         return;
       }
@@ -106,7 +121,7 @@ export function PantallaConexion({ onConectado }: Props) {
     setModoQR(true);
   }
 
-  function onQREscaneado({ data }: { data: string }) {
+  function alEscanearQR({ data }: { data: string }) {
     if (conectando) return;
     setModoQR(false);
     setIp(data);
@@ -115,17 +130,20 @@ export function PantallaConexion({ onConectado }: Props) {
 
   if (modoQR) {
     return (
-      <View style={styles.contenedor}>
+      <View style={estilos.contenedor}>
         <CameraView
           style={StyleSheet.absoluteFill}
-          onBarcodeScanned={onQREscaneado}
+          onBarcodeScanned={alEscanearQR}
           barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         />
-        <View style={styles.qrOverlay}>
-          <View style={styles.qrMarco} />
-          <Text style={styles.qrTexto}>Apuntá al QR del juego</Text>
-          <TouchableOpacity style={styles.botonCancelar} onPress={() => setModoQR(false)}>
-            <Text style={styles.botonCancelarTexto}>Cancelar</Text>
+        <View style={estilos.qrSuperpuesto}>
+          <View style={estilos.qrMarco} />
+          <Text style={estilos.qrTexto}>Apuntá al QR del juego</Text>
+          <TouchableOpacity
+            style={estilos.botonCancelar}
+            onPress={() => setModoQR(false)}
+          >
+            <Text style={estilos.botonCancelarTexto}>Cancelar</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -134,46 +152,47 @@ export function PantallaConexion({ onConectado }: Props) {
 
   return (
     <KeyboardAvoidingView
-      style={styles.contenedor}
+      style={estilos.contenedor}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.inner}>
-        <Text style={styles.subtitulo}>Gamepad - PicoPark</Text>
+      <View style={estilos.formulario}>
 
-        <TouchableOpacity style={styles.botonQR} onPress={abrirQR} disabled={conectando}>
-          <Text style={styles.botonQRTexto}>Escanear QR del juego</Text>
+        <Text style={estilos.subtitulo}>Gamepad — PicoPark</Text>
+
+        <TouchableOpacity
+          style={estilos.botonQR}
+          onPress={abrirCamaraQR}
+          disabled={conectando}
+        >
+          <Text style={estilos.botonQRTexto}>📷  Escanear QR del juego</Text>
         </TouchableOpacity>
 
-        <Text style={styles.separador}>— o ingresá la IP manualmente —</Text>
+        <Text style={estilos.separador}>— o ingresá la IP manualmente —</Text>
 
         <TextInput
-          style={styles.input}
+          style={estilos.input}
           value={ip}
           onChangeText={setIp}
-          placeholder="por ej: 192.168.1.5:3000"
+          placeholder="ej: 192.168.1.5:3000"
           placeholderTextColor="#555"
           keyboardType="url"
           autoCapitalize="none"
           autoCorrect={false}
           editable={!conectando}
-          onSubmitEditing={() => {
-            if (ip.trim()) {
-              conectar(ip);
-            }
-          }}
+          onSubmitEditing={() => ip.trim() && conectar(ip)}
         />
 
         <TouchableOpacity
           style={[
-            styles.botonConectar,
-            (conectando || !ip.trim()) && styles.botonDeshabilitado
+            estilos.botonConectar,
+            (conectando || !ip.trim()) && estilos.botonDeshabilitado,
           ]}
           onPress={() => conectar(ip)}
           disabled={conectando || !ip.trim()}
         >
           {conectando
             ? <ActivityIndicator color="#1a1a2e" />
-            : <Text style={styles.botonConectarTexto}>Conectar</Text>
+            : <Text style={estilos.botonConectarTexto}>Conectar</Text>
           }
         </TouchableOpacity>
 
@@ -182,47 +201,40 @@ export function PantallaConexion({ onConectado }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const estilos = StyleSheet.create({
   contenedor: {
     flex:            1,
     backgroundColor: '#0f0f1e',
   },
-  inner: {
+  formulario: {
     flex:              1,
     justifyContent:    'center',
     alignItems:        'center',
     paddingHorizontal: 28,
     gap:               14,
   },
-  titulo: {
-    fontSize:      48,
-    fontWeight:    'bold',
-    color:         '#85bdd8',
-    letterSpacing: 2,
-  },
   subtitulo: {
-    fontSize:     13,
-    color:        '#556',
-    marginTop:    -10,
-    marginBottom: 8,
+    fontSize:      13,
+    color:         '#556',
+    marginBottom:  8,
     letterSpacing: 4,
     textTransform: 'uppercase',
   },
   botonQR: {
-    flexDirection:     'row',
-    alignItems:        'center',
+    width:             '100%',
     backgroundColor:   '#151528',
     borderRadius:      14,
     paddingVertical:   16,
     paddingHorizontal: 24,
-    gap:               12,
-    width:             '100%',
-    justifyContent:    'center',
+    alignItems:        'center',
     borderWidth:       1.5,
     borderColor:       '#85bdd8',
   },
-  botonQRIcono: { fontSize: 22 },
-  botonQRTexto: { color: '#85bdd8', fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
+  botonQRTexto: {
+    color:      '#85bdd8',
+    fontSize:   15,
+    fontWeight: '700',
+  },
   separador: {
     color:         '#333',
     fontSize:      12,
@@ -247,11 +259,6 @@ const styles = StyleSheet.create({
     borderRadius:    12,
     paddingVertical: 16,
     alignItems:      'center',
-    shadowColor:     '#85bdd8',
-    shadowOffset:    { width: 0, height: 4 },
-    shadowOpacity:   0.3,
-    shadowRadius:    8,
-    elevation:       6,
   },
   botonDeshabilitado: { opacity: 0.5 },
   botonConectarTexto: {
@@ -260,7 +267,7 @@ const styles = StyleSheet.create({
     fontWeight:    'bold',
     letterSpacing: 1,
   },
-  qrOverlay: {
+  qrSuperpuesto: {
     ...StyleSheet.absoluteFillObject,
     justifyContent:  'center',
     alignItems:      'center',
@@ -275,13 +282,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   qrTexto: {
-    color:           '#e0e0ff',
-    fontSize:        15,
-    marginTop:       24,
-    backgroundColor: 'rgba(0,0,0,0.75)',
-    paddingVertical: 8,
+    color:             '#e0e0ff',
+    fontSize:          15,
+    marginTop:         24,
+    backgroundColor:   'rgba(0,0,0,0.75)',
+    paddingVertical:   8,
     paddingHorizontal: 16,
-    borderRadius:    10,
+    borderRadius:      10,
   },
   botonCancelar: {
     marginTop:         20,

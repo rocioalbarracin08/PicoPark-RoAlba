@@ -4,272 +4,190 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-} from 'react-native';
-
-import { useKeepAwake } from 'expo-keep-awake';
-import * as ScreenOrientation from 'expo-screen-orientation';
-import { Socket } from 'socket.io-client';
-import { SafeAreaView } from 'react-native-safe-area-context';
+}                             from 'react-native';
+import { useKeepAwake }       from 'expo-keep-awake';
+import * as Orientacion       from 'expo-screen-orientation';
+import { SafeAreaView }       from 'react-native-safe-area-context';
 
 import type { InfoJugador } from '../App';
 
+// Tamaños de los botones
+const TAMANIO_BTN      = 72;
+const TAMANIO_BTN_SALTO = 110;
+
+type Direccion = 'izquierda' | 'derecha' | 'salto' | 'arriba';
+
 interface Props {
-  socket: Socket;
-  infoJugador: InfoJugador;
+  ws:            WebSocket;
+  infoJugador:   InfoJugador;
   onDesconectar: () => void;
 }
 
-type Direccion =
-  | 'izquierda'
-  | 'derecha'
-  | 'salto'
-  | 'arriba'
-  | 'abajo';
+export function PantallaGamepad({ ws, infoJugador, onDesconectar }: Props) {
 
-const BTN = 72;
-const BTN_SALTO = 110;
+  useKeepAwake(); // Evita que la pantalla se apague mientras se juega
 
-export function PantallaGamepad({
-  socket,
-  infoJugador,
-  onDesconectar,
-}: Props) {
+  const [conectado, setConectado] = useState(ws.readyState === WebSocket.OPEN);
+  const [fase, setFase]           = useState('jugando');
 
-  useKeepAwake();
+  // Registro de botones actualmente presionados (para no enviar duplicados)
+  const botonesPresionados = useRef<Set<Direccion>>(new Set());
 
-  const [conectado, setConectado] = useState(socket.connected);
-  const [fase, setFase] = useState('jugando');
-
-  const presionados = useRef<Set<Direccion>>(new Set());
-
+  //orientación horizontal 
   useEffect(() => {
-    ScreenOrientation.lockAsync(
-      ScreenOrientation.OrientationLock.LANDSCAPE
-    );
-
+    Orientacion.lockAsync(Orientacion.OrientationLock.LANDSCAPE);
     return () => {
-      ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT_UP
-      );
+      Orientacion.lockAsync(Orientacion.OrientationLock.PORTRAIT_UP);
     };
   }, []);
 
   useEffect(() => {
-
-    const onConnect = () => setConectado(true);
-    const onDisconnect = () => setConectado(false);
-
-    const onEstado = (data: { fase: string }) => {
-      setFase(data.fase);
+    const alAbrir = () => setConectado(true);
+    const alCerrar = () => {
+      setConectado(false);
+      onDesconectar();
     };
 
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('estado', onEstado);
+    const alMensaje = (evento: MessageEvent) => {
+      let mensaje: any;
+      try {
+        mensaje = JSON.parse(evento.data);
+      } catch {
+        return;
+      }
+
+      if (mensaje.tipo === 'estado') {
+        setFase(mensaje.fase);
+      }
+    };
+
+    ws.addEventListener('open',    alAbrir);
+    ws.addEventListener('close',   alCerrar);
+    ws.addEventListener('message', alMensaje);
 
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('estado', onEstado);
+      ws.removeEventListener('open',    alAbrir);
+      ws.removeEventListener('close',   alCerrar);
+      ws.removeEventListener('message', alMensaje);
     };
+  }, [ws, onDesconectar]);
 
-  }, [socket, onDesconectar]);
+  const alPresionar = useCallback((direccion: Direccion) => {
+    if (botonesPresionados.current.has(direccion)) return; // ya estaba presionado
+    botonesPresionados.current.add(direccion);
 
-  const presionar = useCallback((dir: Direccion) => {
-
-    if (presionados.current.has(dir)) {
-      return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        tipo:      'input',
+        direccion,
+        estado:    'presionado',
+      }));
     }
+  }, [ws]);
 
-    presionados.current.add(dir);
+  const alSoltar = useCallback((direccion: Direccion) => {
+    if (!botonesPresionados.current.has(direccion)) return; // ya estaba suelto
+    botonesPresionados.current.delete(direccion);
 
-    socket.emit('input', {
-      direccion: dir,
-      estado: 'presionado',
-    });
-
-  }, [socket]);
-
-  const soltar = useCallback((dir: Direccion) => {
-
-    if (!presionados.current.has(dir)) {
-      return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        tipo:      'input',
+        direccion,
+        estado:    'soltado',
+      }));
     }
+  }, [ws]);
 
-    presionados.current.delete(dir);
-
-    socket.emit('input', {
-      direccion: dir,
-      estado: 'soltado',
-    });
-
-  }, [socket]);
-
-  const ledColor = conectado
-    ? '#00ff88'
-    : '#ff4444';
+  const colorLed = conectado ? '#00ff88' : '#ff4444';
 
   return (
-    <SafeAreaView style={styles.contenedor}>
+    <SafeAreaView style={estilos.contenedor}>
+      <View style={estilos.barra}>
 
-      <View style={styles.barra}>
-
-        <View style={styles.ledRow}>
-          <View
-            style={[
-              styles.led,
-              { backgroundColor: ledColor },
-            ]}
-          />
-
-          <Text style={styles.ledTexto}>
-            {conectado
-              ? 'Conectado'
-              : 'Sin conexión'}
+        <View style={estilos.filaLed}>
+          <View style={[estilos.led, { backgroundColor: colorLed }]} />
+          <Text style={estilos.ledTexto}>
+            {conectado ? 'Conectado' : 'Sin conexión'}
           </Text>
         </View>
 
-        <View
-          style={[
-            styles.nombreTag,
-            {
-              backgroundColor: infoJugador.color + '33',
-              borderColor: infoJugador.color,
-            },
-          ]}
-        >
-          <Text
-            style={[
-              styles.nombreTexto,
-              { color: infoJugador.color },
-            ]}
-          >
+        <View style={[
+          estilos.etiquetaNombre,
+          { backgroundColor: infoJugador.color + '33', borderColor: infoJugador.color }
+        ]}>
+          <Text style={[estilos.textoNombre, { color: infoJugador.color }]}>
             {infoJugador.nombre}
           </Text>
         </View>
 
         {fase === 'esperando' && (
-          <Text style={styles.faseTexto}>
-            ⏳ Esperando jugadores...
-          </Text>
+          <Text style={estilos.textoFase}>⏳ Esperando…</Text>
         )}
-
         {fase === 'nivel-completado' && (
-          <Text
-            style={[
-              styles.faseTexto,
-              { color: '#00ff88' },
-            ]}
-          >
-            🎉 ¡Nivel completado!
-          </Text>
+          <Text style={[estilos.textoFase, { color: '#00ff88' }]}>🎉 ¡Completado!</Text>
         )}
 
-        <TouchableOpacity
-          style={styles.botonSalir}
-          onPress={onDesconectar}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.botonSalirTexto}>
-            Salir
-          </Text>
+        {/* Botón salir */}
+        <TouchableOpacity style={estilos.botonSalir} onPress={onDesconectar}>
+          <Text style={estilos.botonSalirTexto}>Salir</Text>
         </TouchableOpacity>
 
       </View>
 
-      <View
-        style={styles.controles}
-        pointerEvents="box-none"
-      >
+      <View style={estilos.zonaControles} pointerEvents="box-none">
 
-        <View style={styles.dpad}>
+        <View style={estilos.dpad}>
 
-          <View style={styles.filaDpad}>
-
-            <View style={{ width: BTN }} />
-
+          {/* Fila de arriba: botón ▲ */}
+          <View style={estilos.filaDpad}>
+            <View style={{ width: TAMANIO_BTN }} />
             <TouchableOpacity
-              style={[styles.btnDir, styles.btnSecundario]}
-              onPressIn={() => presionar('arriba')}
-              onPressOut={() => soltar('arriba')}
+              style={[estilos.botonDireccion, estilos.botonSecundario]}
+              onPressIn={() => alPresionar('arriba')}
+              onPressOut={() => alSoltar('arriba')}
               activeOpacity={0.7}
               delayLongPress={999999}
             >
-              <Text style={styles.btnDirTexto}>
-                ▲
-              </Text>
+              <Text style={estilos.textoDireccion}>▲</Text>
             </TouchableOpacity>
-
-            <View style={{ width: BTN }} />
-
+            <View style={{ width: TAMANIO_BTN }} />
           </View>
 
-          <View style={styles.filaDpad}>
-
+          <View style={estilos.filaDpad}>
             <TouchableOpacity
-              style={styles.btnDir}
-              onPressIn={() => presionar('izquierda')}
-              onPressOut={() => soltar('izquierda')}
+              style={estilos.botonDireccion}
+              onPressIn={() => alPresionar('izquierda')}
+              onPressOut={() => alSoltar('izquierda')}
               activeOpacity={0.7}
               delayLongPress={999999}
             >
-              <Text style={styles.btnDirTexto}>
-                ◀
-              </Text>
+              <Text style={estilos.textoDireccion}>◀</Text>
             </TouchableOpacity>
 
-            <View style={styles.btnDirCentro} />
+            <View style={estilos.centroVacio} />
 
             <TouchableOpacity
-              style={styles.btnDir}
-              onPressIn={() => presionar('derecha')}
-              onPressOut={() => soltar('derecha')}
+              style={estilos.botonDireccion}
+              onPressIn={() => alPresionar('derecha')}
+              onPressOut={() => alSoltar('derecha')}
               activeOpacity={0.7}
               delayLongPress={999999}
             >
-              <Text style={styles.btnDirTexto}>
-                ▶
-              </Text>
+              <Text style={estilos.textoDireccion}>▶</Text>
             </TouchableOpacity>
-
-          </View>
-
-          <View style={styles.filaDpad}>
-
-            <View style={{ width: BTN }} />
-
-            <TouchableOpacity
-              style={[styles.btnDir, styles.btnSecundario]}
-              onPressIn={() => presionar('abajo')}
-              onPressOut={() => soltar('abajo')}
-              activeOpacity={0.7}
-              delayLongPress={999999}
-            >
-              <Text style={styles.btnDirTexto}>
-                ▼
-              </Text>
-            </TouchableOpacity>
-
-            <View style={{ width: BTN }} />
-
           </View>
 
         </View>
 
         <TouchableOpacity
-          style={styles.btnSalto}
-          onPressIn={() => presionar('salto')}
-          onPressOut={() => soltar('salto')}
+          style={estilos.botonSalto}
+          onPressIn={() => alPresionar('salto')}
+          onPressOut={() => alSoltar('salto')}
           activeOpacity={0.8}
           delayLongPress={999999}
         >
-          <Text style={styles.btnSaltoLetra}>
-            A
-          </Text>
-
-          <Text style={styles.btnSaltoSub}>
-            SALTO
-          </Text>
+          <Text style={estilos.botonSaltoLetra}>A</Text>
+          <Text style={estilos.botonSaltoSub}>SALTO</Text>
         </TouchableOpacity>
 
       </View>
@@ -278,151 +196,119 @@ export function PantallaGamepad({
   );
 }
 
-const styles = StyleSheet.create({
+const estilos = StyleSheet.create({
 
   contenedor: {
-    flex: 1,
+    flex:            1,
     backgroundColor: '#0f0f1e',
   },
-
   barra: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-
+    flexDirection:    'row',
+    alignItems:       'center',
+    justifyContent:   'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 6,
-
-    backgroundColor: '#1a1a2e',
-
+    paddingVertical:  6,
+    backgroundColor:  '#1a1a2e',
     borderBottomWidth: 1,
     borderBottomColor: '#2a2a4e',
   },
-
-  ledRow: {
+  filaLed: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    alignItems:    'center',
+    gap:           6,
   },
-
   led: {
-    width: 9,
-    height: 9,
+    width:        9,
+    height:       9,
     borderRadius: 999,
   },
-
   ledTexto: {
-    color: '#888',
+    color:    '#888',
     fontSize: 11,
   },
-
-  nombreTag: {
-    paddingVertical: 3,
+  etiquetaNombre: {
+    paddingVertical:   3,
     paddingHorizontal: 10,
-
-    borderRadius: 20,
-    borderWidth: 1,
+    borderRadius:      20,
+    borderWidth:       1,
   },
-
-  nombreTexto: {
-    fontSize: 12,
+  textoNombre: {
+    fontSize:   12,
     fontWeight: 'bold',
   },
-
-  faseTexto: {
-    color: 'white',
+  textoFase: {
+    color:    'white',
     fontSize: 12,
   },
-
   botonSalir: {
-    paddingVertical: 4,
+    paddingVertical:   4,
     paddingHorizontal: 10,
-
-    backgroundColor: '#2a2a4e',
-    borderRadius: 6,
+    backgroundColor:   '#2a2a4e',
+    borderRadius:      6,
   },
-
   botonSalirTexto: {
-    color: '#777',
+    color:    '#777',
     fontSize: 11,
   },
 
-  controles: {
-    flex: 1,
-
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-
+  zonaControles: {
+    flex:              1,
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
     paddingHorizontal: 40,
-    paddingVertical: 12,
+    paddingVertical:   12,
   },
 
   dpad: {
     alignItems: 'center',
   },
-
   filaDpad: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems:    'center',
   },
-
-  btnDir: {
-    width: BTN,
-    height: BTN,
-
-    borderRadius: 16,
-
+  botonDireccion: {
+    width:           TAMANIO_BTN,
+    height:          TAMANIO_BTN,
+    borderRadius:    16,
     backgroundColor: '#1e1e3a',
-
-    justifyContent: 'center',
-    alignItems: 'center',
-
-    borderWidth: 2,
-    borderColor: '#3a3a6e',
+    justifyContent:  'center',
+    alignItems:      'center',
+    borderWidth:     2,
+    borderColor:     '#3a3a6e',
   },
-
-  btnSecundario: {
-    opacity: 0.5,
+  botonSecundario: {
+    opacity: 0.6,  
   },
-
-  btnDirCentro: {
-    width: BTN,
-    height: BTN,
+  centroVacio: {
+    width:  TAMANIO_BTN,
+    height: TAMANIO_BTN,
   },
-
-  btnDirTexto: {
-    color: 'white',
+  textoDireccion: {
+    color:    'white',
     fontSize: 28,
   },
 
-  btnSalto: {
-    width: BTN_SALTO,
-    height: BTN_SALTO,
-
-    borderRadius: 999,
-
+  botonSalto: {
+    width:           TAMANIO_BTN_SALTO,
+    height:          TAMANIO_BTN_SALTO,
+    borderRadius:    999,
     backgroundColor: '#85bdd8',
-
-    justifyContent: 'center',
-    alignItems: 'center',
-
-    borderWidth: 3,
-    borderColor: '#b0d8ea',
+    justifyContent:  'center',
+    alignItems:      'center',
+    borderWidth:     3,
+    borderColor:     '#b0d8ea',
   },
-
-  btnSaltoLetra: {
-    fontSize: 42,
+  botonSaltoLetra: {
+    fontSize:   42,
     fontWeight: 'bold',
-    color: '#0f0f1e',
+    color:      '#0f0f1e',
   },
-
-  btnSaltoSub: {
-    fontSize: 10,
-    fontWeight: '700',
+  botonSaltoSub: {
+    fontSize:      10,
+    fontWeight:    '700',
     letterSpacing: 1,
-
-    color: '#0f0f1e',
+    color:         '#0f0f1e',
   },
 
 });

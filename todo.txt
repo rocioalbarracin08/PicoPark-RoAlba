@@ -2,12 +2,13 @@
 ===== ./gamepad/App.tsx =====
 
 import React, { useState, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { PantallaConexion } from './screens/PantallaConexion';
-import { PantallaGamepad } from './screens/PantallaGamepad';
-import { Socket } from 'socket.io-client';
+import { View, StyleSheet }        from 'react-native';
+import { StatusBar }               from 'expo-status-bar';
 
+import { PantallaConexion } from './screens/PantallaConectarAlJuego';
+import { PantallaGamepad  } from './screens/ControlesJugador';
+
+// Datos que el servidor me devuelve al conectarnos
 export type InfoJugador = {
   id:     string;
   nombre: string;
@@ -15,40 +16,40 @@ export type InfoJugador = {
 };
 
 export default function App() {
-  const [servidorUrl, setServidorUrl]   = useState<string | null>(null);
-  const [infoJugador, setInfoJugador]   = useState<InfoJugador | null>(null);
-  const socketRef                       = useRef<Socket | null>(null);
+  const [infoJugador, setInfoJugador] = useState<InfoJugador | null>(null);
 
-  function handleConectado(url: string, info: InfoJugador, socket: Socket) {
-    socketRef.current = socket;
-    setServidorUrl(url);
+  // Guardamos el WebSocket para poder cerrarlo al desconectar
+  const wsRef = useRef<WebSocket | null>(null);
+
+  function alConectarse(info: InfoJugador, ws: WebSocket) {
+    wsRef.current = ws;
     setInfoJugador(info);
   }
 
-  function handleDesconectar() {
-    socketRef.current?.disconnect();
-    socketRef.current = null;
-    setServidorUrl(null);
+  function alDesconectarse() {
+    wsRef.current?.close();
+    wsRef.current = null;
     setInfoJugador(null);
   }
 
   return (
-    <View style={styles.contenedor}>
+    <View style={estilos.contenedor}>
       <StatusBar style="light" />
-      {!servidorUrl || !infoJugador ? (
-        <PantallaConexion onConectado={handleConectado} />
+
+      {!infoJugador ? (
+        <PantallaConexion onConectado={alConectarse} />
       ) : (
         <PantallaGamepad
-          socket={socketRef.current!}
+          ws={wsRef.current!}
           infoJugador={infoJugador}
-          onDesconectar={handleDesconectar}
+          onDesconectar={alDesconectarse}
         />
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const estilos = StyleSheet.create({
   contenedor: {
     flex:            1,
     backgroundColor: '#1a1a2e',
@@ -56,107 +57,135 @@ const styles = StyleSheet.create({
 });
 ===== ./gamepad/screens/PantallaConectarAlJuego.tsx =====
 
-import React, { useState, useRef } from 'react';
+// ============================================================
+//  screens/PantallaConexion.tsx  —  Pantalla de conexión
+//
+//  El jugador puede:
+//    1. Escanear el QR que muestra la página del juego
+//    2. Escribir la IP manualmente
+//
+//  Usa WebSocket PURO (sin socket.io).
+// ============================================================
+
+import React, { useState, useRef }        from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, Alert, ActivityIndicator,
   KeyboardAvoidingView, Platform,
-} from 'react-native';
+}                                          from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { io, Socket } from 'socket.io-client';
+
 import type { InfoJugador } from '../App';
 
 interface Props {
-  onConectado: (url: string, info: InfoJugador, socket: Socket) => void;
+  onConectado: (info: InfoJugador, ws: WebSocket) => void;
 }
 
 export function PantallaConexion({ onConectado }: Props) {
   const [ip, setIp]                     = useState('');
   const [conectando, setConectando]     = useState(false);
   const [modoQR, setModoQR]             = useState(false);
-  const [permission, requestPermission] = useCameraPermissions();
-  const yaConecto                       = useRef(false);
+  const [permisoCam, pedirPermisoCam]   = useCameraPermissions();
 
-  function extraerHost(texto: string): string {
-    const limpio = texto
+  // Evita manejar la conexión dos veces si hay eventos simultáneos
+  const conexionManejada = useRef(false);
+
+  // ── Limpiar la IP ingresada ──────────────────────────
+  function limpiarIP(texto: string): string {
+    return texto
       .trim()
-      .replace(/^https?:\/\//, '')
-      .split('/')[0];
-
-    if (!limpio) return '';
-
-    return limpio.includes(':')
-      ? limpio
-      : `${limpio}`;
+      .replace(/^https?:\/\//, '')  
+      .split('/')[0];              
   }
 
+  // ── Conectar al servidor ─────────────────────────────
   function conectar(ipTexto: string) {
-    const host = extraerHost(ipTexto.trim());
+    const host = limpiarIP(ipTexto);
+
     if (!host) {
-      Alert.alert('Error', 'Ingresá una IP válida, ej: 192.168.1.5');
+      Alert.alert('Error', 'Ingresá una IP válida, ej: 192.168.1.5:3000');
       return;
     }
 
-    const url = `http://${host}`;
+    const urlWS = `ws://${host}`;
     setConectando(true);
-    yaConecto.current = false;
+    conexionManejada.current = false;
 
-    const socket = io(url, {
-      transports: ['websocket'],
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      timeout: 10000,
-    });
-
-    socket.on('bienvenido', (info: InfoJugador) => {
-      if (yaConecto.current) return;
-      yaConecto.current = true;
-      socket.off('bienvenido');
-      socket.off('partida-llena');
-      socket.off('connect_error');
-      socket.io.opts.reconnection = true;
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(urlWS);
+    } catch {
       setConectando(false);
-      onConectado(url, info, socket);
-    });
+      Alert.alert('Error', 'URL inválida. Verificá la IP.');
+      return;
+    }
 
-    socket.on('partida-llena', () => {
-      setConectando(false);
-      socket.disconnect();
-      Alert.alert('Partida llena', 'Ya hay 4 jugadores. Esperá a que haya lugar.');
-    });
-
-    socket.on('connect_error', (err) => {
-      if (yaConecto.current) return;
-      yaConecto.current = true;  // ← marcar como "ya manejado" (no solo en éxito)
-
-      console.log('❌ Error conexión:', err.message);
-      setConectando(false);
-      socket.disconnect();
-
-      Alert.alert(
-        'Sin conexión',
-        `No hay servidor en ${host}.\nVerificá la IP e intentá de nuevo.`
-      );
-    });
-
-    socket.on('error', (err) => {
-      console.log('❌ Error con socket:', err);
-    });
-
-    setTimeout(() => {
-      if (!yaConecto.current) {
-        socket.disconnect();
+    // Timeout: si en 6 segundos no hubo respuesta, cancelar
+    const timerTimeout = setTimeout(() => {
+      if (!conexionManejada.current) {
+        conexionManejada.current = true;
+        ws.close();
         setConectando(false);
-        Alert.alert('Sin respuesta', 'El servidor no respondió. Verificá que el juego esté corriendo.');
+        Alert.alert('Sin respuesta', 'El servidor no respondió. ¿Está corriendo el juego?');
       }
-    }, 5000);
+    }, 6000);
+
+    ws.onopen = () => {
+      // Al abrir, enviar el mensaje de identificación (no es pantalla)
+      // El servidor esperará el primer mensaje para asignarnos slot
+      ws.send(JSON.stringify({ tipo: 'gamepad' }));
+    };
+
+    ws.onmessage = (evento) => {
+      if (conexionManejada.current) return;
+
+      let mensaje: any;
+      try {
+        mensaje = JSON.parse(evento.data);
+      } catch {
+        return;
+      }
+
+      if (mensaje.tipo === 'bienvenido') {
+        conexionManejada.current = true;
+        clearTimeout(timerTimeout);
+        setConectando(false);
+
+        const info: InfoJugador = {
+          id:     mensaje.id,
+          nombre: mensaje.nombre,
+          color:  mensaje.color,
+        };
+        onConectado(info, ws);
+      }
+
+      if (mensaje.tipo === 'partida-llena') {
+        conexionManejada.current = true;
+        clearTimeout(timerTimeout);
+        ws.close();
+        setConectando(false);
+        Alert.alert('Partida llena', 'Ya hay 4 jugadores. Esperá a que haya lugar.');
+      }
+    };
+
+    ws.onerror = () => {
+      if (conexionManejada.current) return;
+      conexionManejada.current = true;
+      clearTimeout(timerTimeout);
+      setConectando(false);
+      Alert.alert('Sin conexión', `No se pudo conectar a ${host}.\nVerificá la IP e intentá de nuevo.`);
+    };
+
+    ws.onclose = () => {
+      clearTimeout(timerTimeout);
+    };
   }
 
-  async function abrirQR() {
-    if (!permission?.granted) {
-      const result = await requestPermission();
-      if (!result.granted) {
+  // ── Abrir cámara para QR ─────────────────────────────
+  async function abrirCamaraQR() {
+    if (!permisoCam?.granted) {
+      const resultado = await pedirPermisoCam();
+      if (!resultado.granted) {
         Alert.alert('Permiso denegado', 'Necesitamos la cámara para escanear el QR.');
         return;
       }
@@ -164,74 +193,80 @@ export function PantallaConexion({ onConectado }: Props) {
     setModoQR(true);
   }
 
-  function onQREscaneado({ data }: { data: string }) {
+  function alEscanearQR({ data }: { data: string }) {
     if (conectando) return;
     setModoQR(false);
     setIp(data);
     conectar(data);
   }
 
+  // ── Vista: modo QR ───────────────────────────────────
   if (modoQR) {
     return (
-      <View style={styles.contenedor}>
+      <View style={estilos.contenedor}>
         <CameraView
           style={StyleSheet.absoluteFill}
-          onBarcodeScanned={onQREscaneado}
+          onBarcodeScanned={alEscanearQR}
           barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
         />
-        <View style={styles.qrOverlay}>
-          <View style={styles.qrMarco} />
-          <Text style={styles.qrTexto}>Apuntá al QR del juego</Text>
-          <TouchableOpacity style={styles.botonCancelar} onPress={() => setModoQR(false)}>
-            <Text style={styles.botonCancelarTexto}>Cancelar</Text>
+        <View style={estilos.qrSuperpuesto}>
+          <View style={estilos.qrMarco} />
+          <Text style={estilos.qrTexto}>Apuntá al QR del juego</Text>
+          <TouchableOpacity
+            style={estilos.botonCancelar}
+            onPress={() => setModoQR(false)}
+          >
+            <Text style={estilos.botonCancelarTexto}>Cancelar</Text>
           </TouchableOpacity>
         </View>
       </View>
     );
   }
 
+  // ── Vista: formulario de conexión ────────────────────
   return (
     <KeyboardAvoidingView
-      style={styles.contenedor}
+      style={estilos.contenedor}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.inner}>
-        <Text style={styles.subtitulo}>Gamepad - PicoPark</Text>
+      <View style={estilos.formulario}>
 
-        <TouchableOpacity style={styles.botonQR} onPress={abrirQR} disabled={conectando}>
-          <Text style={styles.botonQRTexto}>Escanear QR del juego</Text>
+        <Text style={estilos.subtitulo}>Gamepad — PicoPark</Text>
+
+        <TouchableOpacity
+          style={estilos.botonQR}
+          onPress={abrirCamaraQR}
+          disabled={conectando}
+        >
+          <Text style={estilos.botonQRTexto}>📷  Escanear QR del juego</Text>
         </TouchableOpacity>
 
-        <Text style={styles.separador}>— o ingresá la IP manualmente —</Text>
+        <Text style={estilos.separador}>— o ingresá la IP manualmente —</Text>
 
         <TextInput
-          style={styles.input}
+          style={estilos.input}
           value={ip}
           onChangeText={setIp}
-          placeholder="por ej: 192.168.1.5:3000"
+          placeholder="ej: 192.168.1.5:3000"
           placeholderTextColor="#555"
           keyboardType="url"
           autoCapitalize="none"
           autoCorrect={false}
           editable={!conectando}
-          onSubmitEditing={() => {
-            if (ip.trim()) {
-              conectar(ip);
-            }
-          }}
+          onSubmitEditing={() => ip.trim() && conectar(ip)}
         />
 
         <TouchableOpacity
           style={[
-            styles.botonConectar,
-            (conectando || !ip.trim()) && styles.botonDeshabilitado
+            estilos.botonConectar,
+            (conectando || !ip.trim()) && estilos.botonDeshabilitado,
           ]}
           onPress={() => conectar(ip)}
           disabled={conectando || !ip.trim()}
         >
           {conectando
             ? <ActivityIndicator color="#1a1a2e" />
-            : <Text style={styles.botonConectarTexto}>Conectar</Text>
+            : <Text style={estilos.botonConectarTexto}>Conectar</Text>
           }
         </TouchableOpacity>
 
@@ -240,47 +275,40 @@ export function PantallaConexion({ onConectado }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const estilos = StyleSheet.create({
   contenedor: {
     flex:            1,
     backgroundColor: '#0f0f1e',
   },
-  inner: {
+  formulario: {
     flex:              1,
     justifyContent:    'center',
     alignItems:        'center',
     paddingHorizontal: 28,
     gap:               14,
   },
-  titulo: {
-    fontSize:      48,
-    fontWeight:    'bold',
-    color:         '#85bdd8',
-    letterSpacing: 2,
-  },
   subtitulo: {
-    fontSize:     13,
-    color:        '#556',
-    marginTop:    -10,
-    marginBottom: 8,
+    fontSize:      13,
+    color:         '#556',
+    marginBottom:  8,
     letterSpacing: 4,
     textTransform: 'uppercase',
   },
   botonQR: {
-    flexDirection:     'row',
-    alignItems:        'center',
+    width:             '100%',
     backgroundColor:   '#151528',
     borderRadius:      14,
     paddingVertical:   16,
     paddingHorizontal: 24,
-    gap:               12,
-    width:             '100%',
-    justifyContent:    'center',
+    alignItems:        'center',
     borderWidth:       1.5,
     borderColor:       '#85bdd8',
   },
-  botonQRIcono: { fontSize: 22 },
-  botonQRTexto: { color: '#85bdd8', fontSize: 15, fontWeight: '700', letterSpacing: 0.5 },
+  botonQRTexto: {
+    color:      '#85bdd8',
+    fontSize:   15,
+    fontWeight: '700',
+  },
   separador: {
     color:         '#333',
     fontSize:      12,
@@ -305,11 +333,6 @@ const styles = StyleSheet.create({
     borderRadius:    12,
     paddingVertical: 16,
     alignItems:      'center',
-    shadowColor:     '#85bdd8',
-    shadowOffset:    { width: 0, height: 4 },
-    shadowOpacity:   0.3,
-    shadowRadius:    8,
-    elevation:       6,
   },
   botonDeshabilitado: { opacity: 0.5 },
   botonConectarTexto: {
@@ -318,7 +341,8 @@ const styles = StyleSheet.create({
     fontWeight:    'bold',
     letterSpacing: 1,
   },
-  qrOverlay: {
+  // ── QR overlay ──────────────────────────────────────
+  qrSuperpuesto: {
     ...StyleSheet.absoluteFillObject,
     justifyContent:  'center',
     alignItems:      'center',
@@ -333,13 +357,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   qrTexto: {
-    color:           '#e0e0ff',
-    fontSize:        15,
-    marginTop:       24,
-    backgroundColor: 'rgba(0,0,0,0.75)',
-    paddingVertical: 8,
+    color:             '#e0e0ff',
+    fontSize:          15,
+    marginTop:         24,
+    backgroundColor:   'rgba(0,0,0,0.75)',
+    paddingVertical:   8,
     paddingHorizontal: 16,
-    borderRadius:    10,
+    borderRadius:      10,
   },
   botonCancelar: {
     marginTop:         20,
@@ -354,278 +378,221 @@ const styles = StyleSheet.create({
 });
 ===== ./gamepad/screens/ControlesJugador.tsx =====
 
+// ============================================================
+//  screens/PantallaGamepad.tsx  —  Pantalla de controles
+//
+//  Muestra el D-Pad (izquierda/derecha) y el botón de salto.
+//  Cada vez que se presiona/suelta un botón, envía un mensaje
+//  al servidor por WebSocket PURO.
+//
+//  Protocolo enviado:
+//    { tipo: 'input', direccion: 'izquierda'|'derecha'|'salto'|'arriba', estado: 'presionado'|'soltado' }
+// ============================================================
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-} from 'react-native';
-
-import { useKeepAwake } from 'expo-keep-awake';
-import * as ScreenOrientation from 'expo-screen-orientation';
-import { Socket } from 'socket.io-client';
-import { SafeAreaView } from 'react-native-safe-area-context';
+}                             from 'react-native';
+import { useKeepAwake }       from 'expo-keep-awake';
+import * as Orientacion       from 'expo-screen-orientation';
+import { SafeAreaView }       from 'react-native-safe-area-context';
 
 import type { InfoJugador } from '../App';
 
+// Tamaños de los botones
+const TAMANIO_BTN      = 72;
+const TAMANIO_BTN_SALTO = 110;
+
+type Direccion = 'izquierda' | 'derecha' | 'salto' | 'arriba';
+
 interface Props {
-  socket: Socket;
-  infoJugador: InfoJugador;
+  ws:            WebSocket;
+  infoJugador:   InfoJugador;
   onDesconectar: () => void;
 }
 
-type Direccion =
-  | 'izquierda'
-  | 'derecha'
-  | 'salto'
-  | 'arriba'
-  | 'abajo';
+export function PantallaGamepad({ ws, infoJugador, onDesconectar }: Props) {
 
-const BTN = 72;
-const BTN_SALTO = 110;
+  useKeepAwake(); // Evita que la pantalla se apague mientras se juega
 
-export function PantallaGamepad({
-  socket,
-  infoJugador,
-  onDesconectar,
-}: Props) {
+  const [conectado, setConectado] = useState(ws.readyState === WebSocket.OPEN);
+  const [fase, setFase]           = useState('jugando');
 
-  useKeepAwake();
+  // Registro de botones actualmente presionados (para no enviar duplicados)
+  const botonesPresionados = useRef<Set<Direccion>>(new Set());
 
-  const [conectado, setConectado] = useState(socket.connected);
-  const [fase, setFase] = useState('jugando');
-
-  const presionados = useRef<Set<Direccion>>(new Set());
-
+  // ── Forzar orientación horizontal ─────────────────────
   useEffect(() => {
-    ScreenOrientation.lockAsync(
-      ScreenOrientation.OrientationLock.LANDSCAPE
-    );
-
+    Orientacion.lockAsync(Orientacion.OrientationLock.LANDSCAPE);
     return () => {
-      ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT_UP
-      );
+      Orientacion.lockAsync(Orientacion.OrientationLock.PORTRAIT_UP);
     };
   }, []);
 
+  // ── Escuchar mensajes del servidor ─────────────────────
   useEffect(() => {
-
-    const onConnect = () => setConectado(true);
-    const onDisconnect = () => setConectado(false);
-
-    const onEstado = (data: { fase: string }) => {
-      setFase(data.fase);
+    const alAbrir = () => setConectado(true);
+    const alCerrar = () => {
+      setConectado(false);
+      onDesconectar();
     };
 
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-    socket.on('estado', onEstado);
+    const alMensaje = (evento: MessageEvent) => {
+      let mensaje: any;
+      try {
+        mensaje = JSON.parse(evento.data);
+      } catch {
+        return;
+      }
+
+      if (mensaje.tipo === 'estado') {
+        setFase(mensaje.fase);
+      }
+    };
+
+    ws.addEventListener('open',    alAbrir);
+    ws.addEventListener('close',   alCerrar);
+    ws.addEventListener('message', alMensaje);
 
     return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-      socket.off('estado', onEstado);
+      ws.removeEventListener('open',    alAbrir);
+      ws.removeEventListener('close',   alCerrar);
+      ws.removeEventListener('message', alMensaje);
     };
+  }, [ws, onDesconectar]);
 
-  }, [socket, onDesconectar]);
+  // ── Enviar botón presionado ────────────────────────────
 
-  const presionar = useCallback((dir: Direccion) => {
+  const alPresionar = useCallback((direccion: Direccion) => {
+    if (botonesPresionados.current.has(direccion)) return; // ya estaba presionado
+    botonesPresionados.current.add(direccion);
 
-    if (presionados.current.has(dir)) {
-      return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        tipo:      'input',
+        direccion,
+        estado:    'presionado',
+      }));
     }
+  }, [ws]);
 
-    presionados.current.add(dir);
+  // ── Enviar botón soltado ───────────────────────────────
 
-    socket.emit('input', {
-      direccion: dir,
-      estado: 'presionado',
-    });
+  const alSoltar = useCallback((direccion: Direccion) => {
+    if (!botonesPresionados.current.has(direccion)) return; // ya estaba suelto
+    botonesPresionados.current.delete(direccion);
 
-  }, [socket]);
-
-  const soltar = useCallback((dir: Direccion) => {
-
-    if (!presionados.current.has(dir)) {
-      return;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        tipo:      'input',
+        direccion,
+        estado:    'soltado',
+      }));
     }
+  }, [ws]);
 
-    presionados.current.delete(dir);
-
-    socket.emit('input', {
-      direccion: dir,
-      estado: 'soltado',
-    });
-
-  }, [socket]);
-
-  const ledColor = conectado
-    ? '#00ff88'
-    : '#ff4444';
+  const colorLed = conectado ? '#00ff88' : '#ff4444';
 
   return (
-    <SafeAreaView style={styles.contenedor}>
+    <SafeAreaView style={estilos.contenedor}>
 
-      <View style={styles.barra}>
+      {/* ── Barra superior con estado ─────────────────── */}
+      <View style={estilos.barra}>
 
-        <View style={styles.ledRow}>
-          <View
-            style={[
-              styles.led,
-              { backgroundColor: ledColor },
-            ]}
-          />
-
-          <Text style={styles.ledTexto}>
-            {conectado
-              ? 'Conectado'
-              : 'Sin conexión'}
+        {/* Indicador de conexión */}
+        <View style={estilos.filaLed}>
+          <View style={[estilos.led, { backgroundColor: colorLed }]} />
+          <Text style={estilos.ledTexto}>
+            {conectado ? 'Conectado' : 'Sin conexión'}
           </Text>
         </View>
 
-        <View
-          style={[
-            styles.nombreTag,
-            {
-              backgroundColor: infoJugador.color + '33',
-              borderColor: infoJugador.color,
-            },
-          ]}
-        >
-          <Text
-            style={[
-              styles.nombreTexto,
-              { color: infoJugador.color },
-            ]}
-          >
+        {/* Nombre y color del jugador */}
+        <View style={[
+          estilos.etiquetaNombre,
+          { backgroundColor: infoJugador.color + '33', borderColor: infoJugador.color }
+        ]}>
+          <Text style={[estilos.textoNombre, { color: infoJugador.color }]}>
             {infoJugador.nombre}
           </Text>
         </View>
 
+        {/* Indicador de fase */}
         {fase === 'esperando' && (
-          <Text style={styles.faseTexto}>
-            ⏳ Esperando jugadores...
-          </Text>
+          <Text style={estilos.textoFase}>⏳ Esperando…</Text>
         )}
-
         {fase === 'nivel-completado' && (
-          <Text
-            style={[
-              styles.faseTexto,
-              { color: '#00ff88' },
-            ]}
-          >
-            🎉 ¡Nivel completado!
-          </Text>
+          <Text style={[estilos.textoFase, { color: '#00ff88' }]}>🎉 ¡Completado!</Text>
         )}
 
-        <TouchableOpacity
-          style={styles.botonSalir}
-          onPress={onDesconectar}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.botonSalirTexto}>
-            Salir
-          </Text>
+        {/* Botón salir */}
+        <TouchableOpacity style={estilos.botonSalir} onPress={onDesconectar}>
+          <Text style={estilos.botonSalirTexto}>Salir</Text>
         </TouchableOpacity>
 
       </View>
 
-      <View
-        style={styles.controles}
-        pointerEvents="box-none"
-      >
+      {/* ── Zona de controles ──────────────────────────── */}
+      <View style={estilos.zonaControles} pointerEvents="box-none">
 
-        <View style={styles.dpad}>
+        {/* D-Pad (izquierda + derecha + arriba para entrar a la puerta) */}
+        <View style={estilos.dpad}>
 
-          <View style={styles.filaDpad}>
-
-            <View style={{ width: BTN }} />
-
+          {/* Fila de arriba: botón ▲ */}
+          <View style={estilos.filaDpad}>
+            <View style={{ width: TAMANIO_BTN }} />
             <TouchableOpacity
-              style={[styles.btnDir, styles.btnSecundario]}
-              onPressIn={() => presionar('arriba')}
-              onPressOut={() => soltar('arriba')}
+              style={[estilos.botonDireccion, estilos.botonSecundario]}
+              onPressIn={() => alPresionar('arriba')}
+              onPressOut={() => alSoltar('arriba')}
               activeOpacity={0.7}
               delayLongPress={999999}
             >
-              <Text style={styles.btnDirTexto}>
-                ▲
-              </Text>
+              <Text style={estilos.textoDireccion}>▲</Text>
             </TouchableOpacity>
-
-            <View style={{ width: BTN }} />
-
+            <View style={{ width: TAMANIO_BTN }} />
           </View>
 
-          <View style={styles.filaDpad}>
-
+          {/* Fila del medio: ◀ · ▶ */}
+          <View style={estilos.filaDpad}>
             <TouchableOpacity
-              style={styles.btnDir}
-              onPressIn={() => presionar('izquierda')}
-              onPressOut={() => soltar('izquierda')}
+              style={estilos.botonDireccion}
+              onPressIn={() => alPresionar('izquierda')}
+              onPressOut={() => alSoltar('izquierda')}
               activeOpacity={0.7}
               delayLongPress={999999}
             >
-              <Text style={styles.btnDirTexto}>
-                ◀
-              </Text>
+              <Text style={estilos.textoDireccion}>◀</Text>
             </TouchableOpacity>
 
-            <View style={styles.btnDirCentro} />
+            <View style={estilos.centroVacio} />
 
             <TouchableOpacity
-              style={styles.btnDir}
-              onPressIn={() => presionar('derecha')}
-              onPressOut={() => soltar('derecha')}
+              style={estilos.botonDireccion}
+              onPressIn={() => alPresionar('derecha')}
+              onPressOut={() => alSoltar('derecha')}
               activeOpacity={0.7}
               delayLongPress={999999}
             >
-              <Text style={styles.btnDirTexto}>
-                ▶
-              </Text>
+              <Text style={estilos.textoDireccion}>▶</Text>
             </TouchableOpacity>
-
-          </View>
-
-          <View style={styles.filaDpad}>
-
-            <View style={{ width: BTN }} />
-
-            <TouchableOpacity
-              style={[styles.btnDir, styles.btnSecundario]}
-              onPressIn={() => presionar('abajo')}
-              onPressOut={() => soltar('abajo')}
-              activeOpacity={0.7}
-              delayLongPress={999999}
-            >
-              <Text style={styles.btnDirTexto}>
-                ▼
-              </Text>
-            </TouchableOpacity>
-
-            <View style={{ width: BTN }} />
-
           </View>
 
         </View>
 
+        {/* Botón de salto */}
         <TouchableOpacity
-          style={styles.btnSalto}
-          onPressIn={() => presionar('salto')}
-          onPressOut={() => soltar('salto')}
+          style={estilos.botonSalto}
+          onPressIn={() => alPresionar('salto')}
+          onPressOut={() => alSoltar('salto')}
           activeOpacity={0.8}
           delayLongPress={999999}
         >
-          <Text style={styles.btnSaltoLetra}>
-            A
-          </Text>
-
-          <Text style={styles.btnSaltoSub}>
-            SALTO
-          </Text>
+          <Text style={estilos.botonSaltoLetra}>A</Text>
+          <Text style={estilos.botonSaltoSub}>SALTO</Text>
         </TouchableOpacity>
 
       </View>
@@ -634,151 +601,124 @@ export function PantallaGamepad({
   );
 }
 
-const styles = StyleSheet.create({
+const estilos = StyleSheet.create({
 
   contenedor: {
-    flex: 1,
+    flex:            1,
     backgroundColor: '#0f0f1e',
   },
 
+  // ── Barra superior ────────────────────────────────────
   barra: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-
+    flexDirection:    'row',
+    alignItems:       'center',
+    justifyContent:   'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 6,
-
-    backgroundColor: '#1a1a2e',
-
+    paddingVertical:  6,
+    backgroundColor:  '#1a1a2e',
     borderBottomWidth: 1,
     borderBottomColor: '#2a2a4e',
   },
-
-  ledRow: {
+  filaLed: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+    alignItems:    'center',
+    gap:           6,
   },
-
   led: {
-    width: 9,
-    height: 9,
+    width:        9,
+    height:       9,
     borderRadius: 999,
   },
-
   ledTexto: {
-    color: '#888',
+    color:    '#888',
     fontSize: 11,
   },
-
-  nombreTag: {
-    paddingVertical: 3,
+  etiquetaNombre: {
+    paddingVertical:   3,
     paddingHorizontal: 10,
-
-    borderRadius: 20,
-    borderWidth: 1,
+    borderRadius:      20,
+    borderWidth:       1,
   },
-
-  nombreTexto: {
-    fontSize: 12,
+  textoNombre: {
+    fontSize:   12,
     fontWeight: 'bold',
   },
-
-  faseTexto: {
-    color: 'white',
+  textoFase: {
+    color:    'white',
     fontSize: 12,
   },
-
   botonSalir: {
-    paddingVertical: 4,
+    paddingVertical:   4,
     paddingHorizontal: 10,
-
-    backgroundColor: '#2a2a4e',
-    borderRadius: 6,
+    backgroundColor:   '#2a2a4e',
+    borderRadius:      6,
   },
-
   botonSalirTexto: {
-    color: '#777',
+    color:    '#777',
     fontSize: 11,
   },
 
-  controles: {
-    flex: 1,
-
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-
+  // ── Zona de controles ────────────────────────────────
+  zonaControles: {
+    flex:              1,
+    flexDirection:     'row',
+    alignItems:        'center',
+    justifyContent:    'space-between',
     paddingHorizontal: 40,
-    paddingVertical: 12,
+    paddingVertical:   12,
   },
 
+  // ── D-Pad ─────────────────────────────────────────────
   dpad: {
     alignItems: 'center',
   },
-
   filaDpad: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems:    'center',
   },
-
-  btnDir: {
-    width: BTN,
-    height: BTN,
-
-    borderRadius: 16,
-
+  botonDireccion: {
+    width:           TAMANIO_BTN,
+    height:          TAMANIO_BTN,
+    borderRadius:    16,
     backgroundColor: '#1e1e3a',
-
-    justifyContent: 'center',
-    alignItems: 'center',
-
-    borderWidth: 2,
-    borderColor: '#3a3a6e',
+    justifyContent:  'center',
+    alignItems:      'center',
+    borderWidth:     2,
+    borderColor:     '#3a3a6e',
   },
-
-  btnSecundario: {
-    opacity: 0.5,
+  botonSecundario: {
+    opacity: 0.6,  // el botón arriba se ve más sutil (es acción especial)
   },
-
-  btnDirCentro: {
-    width: BTN,
-    height: BTN,
+  centroVacio: {
+    width:  TAMANIO_BTN,
+    height: TAMANIO_BTN,
   },
-
-  btnDirTexto: {
-    color: 'white',
+  textoDireccion: {
+    color:    'white',
     fontSize: 28,
   },
 
-  btnSalto: {
-    width: BTN_SALTO,
-    height: BTN_SALTO,
-
-    borderRadius: 999,
-
+  // ── Botón de salto ────────────────────────────────────
+  botonSalto: {
+    width:           TAMANIO_BTN_SALTO,
+    height:          TAMANIO_BTN_SALTO,
+    borderRadius:    999,
     backgroundColor: '#85bdd8',
-
-    justifyContent: 'center',
-    alignItems: 'center',
-
-    borderWidth: 3,
-    borderColor: '#b0d8ea',
+    justifyContent:  'center',
+    alignItems:      'center',
+    borderWidth:     3,
+    borderColor:     '#b0d8ea',
   },
-
-  btnSaltoLetra: {
-    fontSize: 42,
+  botonSaltoLetra: {
+    fontSize:   42,
     fontWeight: 'bold',
-    color: '#0f0f1e',
+    color:      '#0f0f1e',
   },
-
-  btnSaltoSub: {
-    fontSize: 10,
-    fontWeight: '700',
+  botonSaltoSub: {
+    fontSize:      10,
+    fontWeight:    '700',
     letterSpacing: 1,
-
-    color: '#0f0f1e',
+    color:         '#0f0f1e',
   },
 
 });
@@ -817,8 +757,7 @@ module.exports = function(api) {
     "expo-status-bar": "~2.2.0",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-safe-area-context": "^5.8.0",
-    "socket.io-client": "^4.7.5"
+    "react-native-safe-area-context": "^5.8.0"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
@@ -865,240 +804,554 @@ registerRootComponent(App);
 }
 ===== ./pagDeJuego/juego.js =====
 
-const canvas     = document.getElementById('canvas');
-const ctx        = canvas.getContext('2d');
-const elEstado   = document.getElementById('estado-conexion');
-const elContador = document.getElementById('contador-jugadores');
+// ============================================================
+//  juego.js  —  Cliente de la página del juego
+//
+//  Se conecta al servidor por WebSocket PURO y dibuja en canvas.
+//  El mapa es siempre visible: desde el 1er jugador ya se muestra.
+//  Con 3+ jugadores aparece la llave y se puede ganar.
+// ============================================================
+
+// ── Elementos del DOM ────────────────────────────────────
+
+const canvas           = document.getElementById('canvas');
+const ctx              = canvas.getContext('2d');
+const elEstado         = document.getElementById('estado-conexion');
+const elContador       = document.getElementById('contador-jugadores');
 const pantallaEspera   = document.getElementById('pantalla-espera');
 const pantallaVictoria = document.getElementById('pantalla-victoria');
+const elInfoIP         = document.getElementById('info-ip');
+const elQRCanvas       = document.getElementById('qr-imagen');
 
-//Conectarse al servidor (misma IP, puerto 3000)
-const SERVIDOR_URL = `http://${window.location.hostname}:3000`;
-const socket = io(SERVIDOR_URL, {
-  query: { tipo: 'pantalla' },
-
-  transports: ['websocket'],
-
-  reconnection: true,
-  reconnectionDelay: 2000,
-  reconnectionAttempts: Infinity,
-});
-
-let estadoActual = null;
-let nivelActual  = null;
-
-socket.on('connect', () => {
-  elEstado.textContent = '🟢 Conectado';
-});
-
-socket.on('disconnect', () => {
-  elEstado.textContent = '🔴 Desconectado';
-});
-
-// Recibir estado del servidor 
-socket.on('estado', (data) => {
-  estadoActual = data;
-  elContador.textContent = `Jugadores: ${data.jugadores.length}/4`;
-
-  if (data.fase === 'esperando') {
-    pantallaEspera.classList.remove('oculto');
-    pantallaVictoria.classList.add('oculto');
-  } else if (data.fase === 'nivel-completado') {
-    pantallaVictoria.classList.remove('oculto');
-    pantallaEspera.classList.add('oculto');
-  } else {
-    pantallaEspera.classList.add('oculto');
-    pantallaVictoria.classList.add('oculto');
-  }
-});
-
-socket.on('jugador-desconectado', ({ nombre }) => {
-  console.log(`${nombre} se desconectó`);
-});
+// ── Tamaño del canvas ────────────────────────────────────
 
 function ajustarCanvas() {
   canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
+  canvas.height = window.innerHeight - 34; // descontar la cabecera
 }
 window.addEventListener('resize', ajustarCanvas);
 ajustarCanvas();
 
-function escalar(valor, base, tamaño) {
-  return (valor / base) * tamaño;
+// ── Datos de los niveles (deben coincidir con configuracionNiveles.ts) ──
+
+const NIVELES_DATOS = {
+  1: {
+    anchoMundo: 1200,
+    altoMundo:  600,
+    plataformas: [
+      { x: 600,  y: 570, ancho: 1200, alto: 20 },
+      { x: 380,  y: 420, ancho: 180,  alto: 20 },
+      { x: 850,  y: 290, ancho: 180,  alto: 20 },
+      { x: 10,   y: 300, ancho: 20,   alto: 600 },
+      { x: 1190, y: 300, ancho: 20,   alto: 600 },
+    ],
+    posicionPuerta: { x: 1140, y: 510 },
+    posicionLlave:  { x: 850,  y: 250 },
+    vacioY:         590,   // debajo de esta Y el jugador "cae al vacío"
+  },
+  2: {
+    anchoMundo: 800,
+    altoMundo:  700,
+    plataformas: [
+      { x: 160,  y: 670, ancho: 320, alto: 20 },
+      { x: 640,  y: 670, ancho: 320, alto: 20 },
+      { x: 200,  y: 310, ancho: 160, alto: 20 },
+      { x: 640,  y: 490, ancho: 200, alto: 20 },
+      { x: 10,   y: 350, ancho: 20,  alto: 700 },
+      { x: 790,  y: 350, ancho: 20,  alto: 700 },
+    ],
+    posicionPuerta: { x: 720, y: 430 },
+    posicionLlave:  { x: 200, y: 270 },
+    vacioY:         690,
+  },
+};
+
+// ── Estado recibido del servidor ─────────────────────────
+
+let estadoActual = null;   // último snapshot recibido
+let urlServidor  = null;   // URL para el QR (llega en 'info-servidor')
+
+// ── QR generado en canvas ────────────────────────────────
+// Usamos la librería qrcodejs cargada como <script> inline en index.html
+
+function generarQR(url) {
+  elInfoIP.textContent = `IP: ${url.replace('http://', '')}`;
+
+  // Limpiar QR anterior
+  elQRCanvas.innerHTML = '';
+
+  // Generar nuevo QR con qrcode.js (inyectado en index.html)
+  if (typeof QRCode !== 'undefined') {
+    new QRCode(elQRCanvas, {
+      text:          url,
+      width:         120,
+      height:        120,
+      colorDark:     '#000000',
+      colorLight:    '#ffffff',
+      correctLevel:  QRCode.CorrectLevel.M,
+    });
+  }
 }
+
+// ── WebSocket ────────────────────────────────────────────
+
+const urlWS = `ws://${window.location.host}`;
+let   ws    = null;
+let   intervaloReconexion = null;
+
+function conectarWS() {
+  ws = new WebSocket(urlWS);
+
+  ws.onopen = () => {
+    elEstado.textContent = '🟢 Conectado';
+    ws.send(JSON.stringify({ tipo: 'pantalla' }));
+
+    if (intervaloReconexion) {
+      clearInterval(intervaloReconexion);
+      intervaloReconexion = null;
+    }
+  };
+
+  ws.onclose = () => {
+    elEstado.textContent = '🔴 Desconectado';
+    if (!intervaloReconexion) {
+      intervaloReconexion = setInterval(conectarWS, 2000);
+    }
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onmessage = (evento) => {
+    let mensaje;
+    try { mensaje = JSON.parse(evento.data); }
+    catch { return; }
+    manejarMensaje(mensaje);
+  };
+}
+
+// ── Manejar mensajes del servidor ───────────────────────
+
+function manejarMensaje(mensaje) {
+
+  // URL + QR del servidor (llega una vez al conectarse la pantalla)
+  if (mensaje.tipo === 'info-servidor') {
+    urlServidor = mensaje.urlJuego;
+    generarQR(urlServidor);
+  }
+
+  if (mensaje.tipo === 'estado') {
+    estadoActual = mensaje;
+    elContador.textContent = `Jugadores: ${mensaje.jugadores.length}/4`;
+
+    // El mapa se muestra cuando hay al menos 1 jugador (fase 'jugando')
+    // o cuando no hay nadie (fase 'esperando'): en ese caso se muestra
+    // el mapa vacío de fondo con la pantalla de espera encima.
+    if (mensaje.fase === 'nivel-completado') {
+      pantallaVictoria.classList.remove('oculto');
+      pantallaEspera.classList.add('oculto');
+    } else if (mensaje.fase === 'esperando') {
+      pantallaEspera.classList.remove('oculto');
+      pantallaVictoria.classList.add('oculto');
+    } else {
+      // fase === 'jugando': ocultar ambas pantallas → el mapa queda visible
+      pantallaEspera.classList.add('oculto');
+      pantallaVictoria.classList.add('oculto');
+    }
+  }
+}
+
+// ── Colores del mapa ─────────────────────────────────────
+// Estilo limpio y claro: fondo claro, plataformas oscuras, jugadores de colores.
+
+const COLOR_FONDO         = '#e8eaf0';   // gris muy claro
+const COLOR_PLATAFORMA    = '#3d3d52';   // gris azulado oscuro
+const COLOR_CAJA          = '#c0763a';   // marrón anaranjado (madera)
+const COLOR_CAJA_BORDE    = '#8b4a1e';
+const COLOR_PUERTA_CERR   = '#666677';
+const COLOR_PUERTA_ABIE   = '#2ecc71';
+const COLOR_PUERTA_BORDE  = '#222';
+const COLOR_LLAVE         = '#f5c542';
+const COLOR_VACIO         = '#7fb8e8';   // "agua" abajo: zona de caída
+
+// ── Dibujar plataforma ───────────────────────────────────
+
+function dibujarPlataforma(plat, escX, escY) {
+  const x = (plat.x - plat.ancho / 2) * escX;
+  const y = (plat.y - plat.alto  / 2) * escY;
+  const w = plat.ancho * escX;
+  const h = plat.alto  * escY;
+
+  ctx.fillStyle = COLOR_PLATAFORMA;
+  ctx.fillRect(x, y, w, h);
+
+  // Línea de brillo en el tope
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.fillRect(x, y, w, Math.max(2, h * 0.25));
+}
+
+// ── Dibujar caja empujable ───────────────────────────────
+
+function dibujarCaja(caja, escX, escY) {
+  const anchoRender = 44;  // tamaño fijo de la caja en el mundo
+  const altoRender  = 44;
+  const x = (caja.x - anchoRender / 2) * escX;
+  const y = (caja.y - altoRender  / 2) * escY;
+  const w = anchoRender * escX;
+  const h = altoRender  * escY;
+
+  // Cuerpo de la caja
+  ctx.fillStyle = COLOR_CAJA;
+  ctx.fillRect(x, y, w, h);
+
+  // Borde
+  ctx.strokeStyle = COLOR_CAJA_BORDE;
+  ctx.lineWidth   = 2;
+  ctx.strokeRect(x, y, w, h);
+
+  // Cruz decorativa (estilo caja de madera)
+  ctx.strokeStyle = COLOR_CAJA_BORDE;
+  ctx.lineWidth   = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, y); ctx.lineTo(x + w, y + h);
+  ctx.moveTo(x + w, y); ctx.lineTo(x, y + h);
+  ctx.stroke();
+}
+
+// ── Dibujar la puerta de salida ──────────────────────────
+
+function dibujarPuerta(px, py, escX, escY, abierta) {
+  const anchoP = 48;
+  const altoP  = 72;
+  const x = (px - anchoP / 2) * escX;
+  const y = (py - altoP)      * escY;
+  const w = anchoP * escX;
+  const h = altoP  * escY;
+
+  ctx.fillStyle   = abierta ? COLOR_PUERTA_ABIE : COLOR_PUERTA_CERR;
+  ctx.strokeStyle = COLOR_PUERTA_BORDE;
+  ctx.lineWidth   = 2;
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeRect(x, y, w, h);
+
+  // Texto indicador
+  ctx.fillStyle = 'white';
+  ctx.font      = `bold ${Math.max(11, 13 * Math.min(escX, escY))}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.fillText(abierta ? 'META' : 'CERR', px * escX, (py - altoP / 2) * escY);
+}
+
+// ── Dibujar la llave ─────────────────────────────────────
+
+function dibujarLlave(lx, ly, escX, escY) {
+  const radio = 10 * Math.min(escX, escY);
+  const cx    = lx * escX;
+  const cy    = ly * escY;
+
+  // Círculo amarillo brillante
+  ctx.beginPath();
+  ctx.arc(cx, cy, radio, 0, Math.PI * 2);
+  ctx.fillStyle = COLOR_LLAVE;
+  ctx.fill();
+  ctx.strokeStyle = '#b8860b';
+  ctx.lineWidth   = 2;
+  ctx.stroke();
+
+  // Símbolo de llave
+  ctx.fillStyle = '#5a3e00';
+  ctx.font      = `bold ${Math.max(10, 14 * Math.min(escX, escY))}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('🗝', cx, cy);
+  ctx.textBaseline = 'alphabetic';
+}
+
+// ── Dibujar un jugador ───────────────────────────────────
+
+function dibujarJugador(jugador, escX, escY) {
+  const anchoJ = 36;
+  const altoJ  = 54;
+  const jx = jugador.x * escX;
+  const jy = jugador.y * escY;
+  const w  = anchoJ * escX;
+  const h  = altoJ  * escY;
+
+  // Sombra sutil
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(jx - w / 2 + 3, jy + h / 2 - 4, w, 6);
+
+  // Cuerpo del jugador (rectángulo redondeado)
+  ctx.fillStyle = jugador.color;
+  ctx.beginPath();
+  const radio = Math.max(3, 5 * Math.min(escX, escY));
+  ctx.roundRect(jx - w / 2, jy - h / 2, w, h, radio);
+  ctx.fill();
+
+  // Borde
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+
+  // Número arriba del jugador (ej: "1")
+  const numero = jugador.nombre.replace('Jugador ', '');
+  ctx.fillStyle    = '#fff';
+  ctx.font         = `bold ${Math.max(8, 10 * Math.min(escX, escY))}px monospace`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(numero, jx, jy - h / 2 - 2);
+  ctx.textBaseline = 'alphabetic';
+
+  // Ícono de llave si la lleva
+  if (jugador.cargandoLlave) {
+    ctx.font      = `${Math.max(10, 13 * Math.min(escX, escY))}px monospace`;
+    ctx.fillStyle = COLOR_LLAVE;
+    ctx.textAlign = 'center';
+    ctx.fillText('🗝', jx, jy - h / 2 - 14);
+  }
+}
+
+// ── Dibujar el indicador "necesitás X jugadores" ─────────
+
+function dibujarIndicadorJugadores(cantidadActual, escX, escY) {
+  if (cantidadActual >= 3) return; // ya hay suficientes
+
+  const texto = `Necesitás ${3 - cantidadActual} jugador${3 - cantidadActual > 1 ? 'es' : ''} más para la llave`;
+
+  ctx.fillStyle    = 'rgba(0,0,0,0.55)';
+  ctx.font         = `bold ${Math.max(11, 14 * Math.min(escX, escY))}px monospace`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText(texto, canvas.width / 2, 40);
+  ctx.textBaseline = 'alphabetic';
+}
+
+// ── Bucle de dibujado (requestAnimationFrame) ────────────
 
 function dibujar() {
   requestAnimationFrame(dibujar);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (!estadoActual) return;
+  const nivel = estadoActual
+    ? NIVELES_DATOS[estadoActual.nivelActual]
+    : NIVELES_DATOS[1];
 
-  const nivel = estadoActual.nivelActual === 1
-    ? { ancho: 1200, alto: 600, plataformas: [
-        { x: 600,  y: 580, ancho: 1200, alto: 20 },
-        { x: 400,  y: 420, ancho: 200,  alto: 20 },
-        { x: 900,  y: 300, ancho: 200,  alto: 20 },
-        { x: 0,    y: 300, ancho: 20,   alto: 600 },
-        { x: 1200, y: 300, ancho: 20,   alto: 600 },
-      ], puerta: { x: 1150, y: 520 } }
-    : { ancho: 800, alto: 700, plataformas: [
-        { x: 400, y: 680, ancho: 800, alto: 20 },
-        { x: 200, y: 300, ancho: 160, alto: 20 },
-        { x: 650, y: 500, ancho: 200, alto: 20 },
-        { x: 0,   y: 350, ancho: 20,  alto: 700 },
-        { x: 800, y: 350, ancho: 20,  alto: 700 },
-      ], puerta: { x: 650, y: 450 } };
+  if (!nivel) return;
 
-  const sx = canvas.width  / nivel.ancho;
-  const sy = canvas.height / nivel.alto;
+  const escX = canvas.width  / nivel.anchoMundo;
+  const escY = canvas.height / nivel.altoMundo;
 
-  ctx.fillStyle = '#1a1a2e';
+  // ── Fondo gris claro ────────────────────────────────
+  ctx.fillStyle = COLOR_FONDO;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.fillStyle = '#4a4a6a';
-  for (const p of nivel.plataformas) {
-    ctx.fillRect(
-      (p.x - p.ancho / 2) * sx,
-      (p.y - p.alto  / 2) * sy,
-      p.ancho * sx,
-      p.alto  * sy
-    );
+  // ── Zona de caída (abajo del mapa) ──────────────────
+  const yVacio = nivel.vacioY * escY;
+  ctx.fillStyle = COLOR_VACIO;
+  ctx.fillRect(0, yVacio, canvas.width, canvas.height - yVacio);
+
+  // ── Indicador de nivel ──────────────────────────────
+  ctx.fillStyle    = '#555';
+  ctx.font         = `bold ${Math.max(11, 14 * escX)}px monospace`;
+  ctx.textAlign    = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`NIVEL ${estadoActual?.nivelActual ?? 1}  —  ${estadoActual?.nivelActual === 2 ? 'La Torre' : 'El Puente'}`, 12, 8);
+  ctx.textBaseline = 'alphabetic';
+
+  // ── Plataformas ─────────────────────────────────────
+  for (const plat of nivel.plataformas) {
+    dibujarPlataforma(plat, escX, escY);
   }
 
-  ctx.fillStyle = estadoActual.llaveRecogida ? '#00ff88' : '#555';
-  ctx.fillRect(
-    (nivel.puerta.x - 30) * sx,
-    (nivel.puerta.y - 40) * sy,
-    60 * sx,
-    80 * sy
-  );
-  ctx.fillStyle = 'white';
-  ctx.font = `${20 * Math.min(sx, sy)}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.fillText(
-    estadoActual.llaveRecogida ? '🚪' : '🔒',
-    nivel.puerta.x * sx,
-    (nivel.puerta.y + 10) * sy
-  );
+  if (!estadoActual) return;  // si no hay estado, solo se dibuja el mapa vacío
 
-  // Llave (solo si está en el mundo)
-  if (estadoActual.llaveEnJuego && estadoActual.llaveX != null) {
-    ctx.font = `${24 * Math.min(sx, sy)}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText('🗝️', estadoActual.llaveX * sx, estadoActual.llaveY * sy);
-  }
-
-  // Jugadores
-  for (const j of estadoActual.jugadores) {
-    const jx = j.x * sx;
-    const jy = j.y * sy;
-    const w  = 40 * sx;
-    const h  = 60 * sy;
-
-    ctx.fillStyle = j.color;
-    ctx.beginPath();
-    ctx.roundRect(jx - w/2, jy - h/2, w, h, 6);
-    ctx.fill();
-
-    ctx.fillStyle = 'white';
-    ctx.font = `bold ${11 * Math.min(sx, sy)}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText(j.nombre.split(' ')[1], jx, jy - h/2 - 5 * sy);
-
-    if (j.cargandoLlave) {
-      ctx.font = `${16 * Math.min(sx, sy)}px monospace`;
-      ctx.fillText('🗝️', jx, jy);
+  // ── Cajas empujables ────────────────────────────────
+  if (estadoActual.cajas) {
+    for (const caja of estadoActual.cajas) {
+      dibujarCaja(caja, escX, escY);
     }
   }
+
+  // ── Puerta de salida ────────────────────────────────
+  dibujarPuerta(
+    nivel.posicionPuerta.x,
+    nivel.posicionPuerta.y,
+    escX, escY,
+    estadoActual.llaveRecogida   // abierta solo cuando alguien tiene la llave
+  );
+
+  // ── Llave (solo visible con 3+ jugadores) ───────────
+  if (estadoActual.llaveEnJuego && estadoActual.llaveX != null) {
+    dibujarLlave(estadoActual.llaveX, estadoActual.llaveY, escX, escY);
+  }
+
+  // ── Jugadores ───────────────────────────────────────
+  for (const jugador of estadoActual.jugadores) {
+    dibujarJugador(jugador, escX, escY);
+  }
+
+  // ── Indicador de cuántos jugadores faltan ───────────
+  dibujarIndicadorJugadores(estadoActual.jugadores.length, escX, escY);
 }
 
+// ── Arrancar ─────────────────────────────────────────────
+
+conectarWS();
 dibujar();
 ===== ./pagDeJuego/estilos.css =====
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
+/* ============================================================
+   estilos.css  —  Estilos de la página del juego
+   ============================================================ */
+
+* {
+  margin:     0;
+  padding:    0;
+  box-sizing: border-box;
+}
 
 body {
-  background: #1a1a2e;
-  overflow: hidden;
+  background:  #1a1a2e;
+  overflow:    hidden;
   font-family: monospace;
-  color: white;
+  color:       white;
 }
 
-#info-conexion {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  z-index: 10;
-  display: flex;
-  gap: 20px;
-  font-size: 14px;
-  background: rgba(0,0,0,0.5);
-  padding: 6px 12px;
-  border-radius: 8px;
+/* ── Cabecera ───────────────────────────────────────────── */
+
+#cabecera {
+  position:        fixed;
+  top:             0;
+  left:            0;
+  right:           0;
+  height:          34px;
+  z-index:         20;
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  gap:             24px;
+  padding:         0 16px;
+  background:      rgba(0, 0, 0, 0.75);
+  font-size:       13px;
 }
 
-#mundo {
-  width: 100vw;
-  height: 100vh;
-  position: relative;
-}
+#titulo            { font-size: 15px; font-weight: bold; }
+#estado-conexion   { color: #aaa; }
+#contador-jugadores { color: #85bdd8; }
+
+/* ── Canvas ─────────────────────────────────────────────── */
 
 #canvas {
-  display: block;
+  display:    block;
+  margin-top: 34px;   /* empuja el canvas debajo de la cabecera */
 }
 
-.oculto { display: none !important; }
+/* ── Pantallas flotantes (espera / victoria) ─────────────── */
 
 #pantalla-espera,
 #pantalla-victoria {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.75);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  position:        fixed;
+  inset:           34px 0 0 0;   /* debajo de la cabecera */
+  background:      rgba(15, 15, 30, 0.82);
+  display:         flex;
+  flex-direction:  column;
+  align-items:     center;
   justify-content: center;
-  gap: 12px;
-  font-size: 24px;
-  text-align: center;
+  gap:             10px;
+  text-align:      center;
+  z-index:         10;
 }
+
+.mensaje-grande {
+  font-size:   26px;
+  font-weight: bold;
+}
+
+.mensaje-chico {
+  font-size: 14px;
+  color:     #aaa;
+}
+
+/* IP del servidor */
+#info-ip {
+  margin-top:    10px;
+  font-size:     15px;
+  font-weight:   bold;
+  color:         #85bdd8;
+  background:    rgba(0,0,0,0.5);
+  padding:       6px 18px;
+  border-radius: 8px;
+  letter-spacing: 1px;
+}
+
+/* Contenedor del QR generado por qrcode.js */
+#qr-imagen {
+  margin-top:    10px;
+  background:    white;
+  padding:       10px;
+  border-radius: 12px;
+  display:       inline-block;
+  /* qrcode.js inyecta un <canvas> o <img> acá */
+}
+
+#qr-imagen canvas,
+#qr-imagen img {
+  display: block;
+}
+
+/* ── Utilidades ─────────────────────────────────────────── */
+
+.oculto { display: none !important; }
 ===== ./servidor/configuracionJugadores.ts =====
 
+// ============================================================
+//  configuracionJugadores.ts  —  Tipos y datos de los jugadores
+// ============================================================
+
 import type Matter from 'matter-js';
+
+// ── Tipos ────────────────────────────────────────────────
 
 export type FaseJuego = 'esperando' | 'jugando' | 'nivel-completado';
 
 export interface Jugador {
-  id:            string;
-  nombre:        string;
-  color:         string;
-  cuerpofisico:  Matter.Body;
-  cargandoLlave: boolean;
-  conectado:     boolean;
-  slotIndex:     number;  
+  id:            string;   // identificador único ("ws-0", "ws-1"…)
+  nombre:        string;   // "Jugador 1", "Jugador 2"…
+  color:         string;   // color hex del jugador
+  cuerpoFisico:  Matter.Body;
+  cargandoLlave: boolean;  // true si este jugador tiene la llave encima
+  slotIndex:     number;   // posición en el pool (0-3)
 }
 
 export interface EstadoJuego {
   fase:          FaseJuego;
   nivelActual:   number;
   jugadores:     Map<string, Jugador>;
-  llaveRecogida: boolean;
-  llaveEnJuego:  boolean;
+  llaveRecogida: boolean;  // la llave ya fue levantada por alguien
+  llaveEnJuego:  boolean;  // la llave está visible/disponible en el mapa
 }
 
+// ── Configuración de cada slot ───────────────────────────
+// El orden define: slot 0 = Jugador 1, slot 1 = Jugador 2, etc.
+
 export const CONFIGS_JUGADORES = [
-  { color: '#85bdd8', nombre: 'Jugador 1' },
-  { color: '#ce93d8', nombre: 'Jugador 2' },
-  { color: '#b85656', nombre: 'Jugador 3' },
-  { color: '#fddcab', nombre: 'Jugador 4' },
+  { nombre: 'Jugador 1', color: '#85bdd8' },
+  { nombre: 'Jugador 2', color: '#ce93d8' },
+  { nombre: 'Jugador 3', color: '#ef9a9a' },
+  { nombre: 'Jugador 4', color: '#fddcab' },
 ] as const;
 
-export const MAX_JUGADORES     = 4;
-export const MIN_PARA_GANAR    = 3; 
+// ── Reglas del juego ─────────────────────────────────────
+
+export const MAX_JUGADORES = 4;  // máximo de jugadores simultáneos
+
+// Con menos de este número no aparece la llave ni se puede ganar.
+// Con 1 o 2 jugadores pueden moverse y explorar el mapa libremente.
+export const MIN_JUGADORES_PARA_GANAR = 3;
+
+// ── Crear estado inicial vacío ───────────────────────────
 
 export function crearEstadoInicial(): EstadoJuego {
   return {
-    fase:          'jugando',
+    fase:          'esperando',
     nivelActual:   1,
     jugadores:     new Map(),
     llaveRecogida: false,
@@ -1107,15 +1360,35 @@ export function crearEstadoInicial(): EstadoJuego {
 }
 ===== ./servidor/red.ts =====
 
-import { Server as IOServer, Socket } from 'socket.io';
-import { createServer } from 'http';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import Matter from 'matter-js';
+// ============================================================
+//  red.ts  —  Servidor WebSocket PURO (sin socket.io)
+//
+//  Protocolo de mensajes (JSON):
+//
+//  Servidor → Cliente:
+//    { tipo: 'bienvenido',        id, nombre, color }
+//    { tipo: 'partida-llena'                        }
+//    { tipo: 'estado',            ...snapshot       }
+//    { tipo: 'llave-recogida',    jugadorId, nombre }
+//    { tipo: 'llave-reaparecio'                     }
+//    { tipo: 'nivel-completado',  nivel             }
+//    { tipo: 'jugador-salio',     id, nombre        }
+//
+//  Cliente → Servidor:
+//    { tipo: 'input', direccion, estado }
+//    { tipo: 'pantalla' }   (solo la página del juego)
+// ============================================================
+
+import { createServer }   from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
+import { readFileSync }   from 'fs';
+import { join }           from 'path';
+import Matter             from 'matter-js';
 
 import {
   crearMotorFisico,
   crearCuerpoJugador,
+  crearCuerposCajas,
   aplicarMovimiento,
   estaEnSuelo,
   avanzarMotor,
@@ -1127,475 +1400,644 @@ import {
   crearEstadoInicial,
   CONFIGS_JUGADORES,
   MAX_JUGADORES,
-  MIN_PARA_GANAR,
+  MIN_JUGADORES_PARA_GANAR,
 } from './configuracionJugadores';
 
 import type { Jugador } from './configuracionJugadores';
 
-const TICK_RATE = 1000 / 60;
+// Cuántas veces por segundo se actualiza la física (60 fps)
+const TICKS_POR_SEGUNDO = 60;
+const MS_POR_TICK       = 1000 / TICKS_POR_SEGUNDO;
 
-interface JugadorInterno extends Jugador {
-  slotIndex: number;
+// ── Helpers de envío ─────────────────────────────────────
+
+// Envía un objeto JSON a un solo cliente
+function enviar(cliente: WebSocket, mensaje: object) {
+  if (cliente.readyState === WebSocket.OPEN) {
+    cliente.send(JSON.stringify(mensaje));
+  }
 }
 
-export function iniciarServidorWS(puerto: number, dirPagDeJuego: string) {
+// Envía un objeto JSON a TODOS los clientes conectados
+function enviarATodos(clientes: Set<WebSocket>, mensaje: object) {
+  const texto = JSON.stringify(mensaje);
+  for (const cliente of clientes) {
+    if (cliente.readyState === WebSocket.OPEN) {
+      cliente.send(texto);
+    }
+  }
+}
 
-  // HTTP 
-  const httpServer = createServer((req, res) => {
-    const url = req.url ?? '/';
-    const mapa: Record<string, string> = {
-      '/': 'index.html',
-      '/index.html': 'index.html',
-      '/juego.js': 'juego.js',
+// ── Función principal ────────────────────────────────────
+
+export function iniciarServidorWS(puerto: number, dirPagDeJuego: string, urlJuego: string) {
+
+  // ── Servidor HTTP (sirve los archivos de la página) ──
+  const servidorHttp = createServer((solicitud, respuesta) => {
+    const url = solicitud.url ?? '/';
+
+    const archivosPermitidos: Record<string, string> = {
+      '/':            'index.html',
+      '/index.html':  'index.html',
+      '/juego.js':    'juego.js',
       '/estilos.css': 'estilos.css',
     };
-    const tipos: Record<string, string> = {
-      'index.html': 'text/html',
-      'juego.js': 'application/javascript',
+
+    const tiposMime: Record<string, string> = {
+      'index.html':  'text/html; charset=utf-8',
+      'juego.js':    'application/javascript',
       'estilos.css': 'text/css',
     };
-    const archivo = mapa[url];
-    if (!archivo) { res.writeHead(404); res.end('404'); return; }
+
+    const nombreArchivo = archivosPermitidos[url];
+
+    if (!nombreArchivo) {
+      respuesta.writeHead(404);
+      respuesta.end('Página no encontrada');
+      return;
+    }
+
     try {
-      const contenido = readFileSync(join(dirPagDeJuego, archivo));
-      res.writeHead(200, { 'Content-Type': tipos[archivo] });
-      res.end(contenido);
+      const contenido = readFileSync(join(dirPagDeJuego, nombreArchivo));
+      respuesta.writeHead(200, { 'Content-Type': tiposMime[nombreArchivo] });
+      respuesta.end(contenido);
     } catch {
-      res.writeHead(500); res.end('error');
+      respuesta.writeHead(500);
+      respuesta.end('Error interno del servidor');
     }
   });
 
-  const io = new IOServer(httpServer, {
-    cors: { origin: '*' },
-    transports: ['websocket'],
-    pingTimeout:  60000,
-    pingInterval: 25000,
-  });
+  // ── Servidor WebSocket (sobre el mismo puerto HTTP) ──
+  const servidorWS = new WebSocketServer({ server: servidorHttp });
 
-  const estado       = crearEstadoInicial();
-  const motor        = crearMotorFisico();
-  const nivelConfig  = NIVELES[estado.nivelActual - 1];
-  const inputsActivos = new Map<string, Set<string>>();
+  // ── Estado global del juego ──────────────────────────
+  const estado             = crearEstadoInicial();
+  const { motor, mundo }   = crearMotorFisico();
+  const nivelConfig        = NIVELES[estado.nivelActual - 1];
+
+  // Mapa de botones: la clave es idWS ("ws-0", "ws-1"…)
+  // IMPORTANTE: debe coincidir con jugador.idWS, no jugador.id
+  const botonesPorIdWS = new Map<string, Set<string>>();
   const slotsLibres: number[] = [0, 1, 2, 3];
 
-  for (const p of nivelConfig.plataformas) {
-    Matter.World.add(motor.mundo,
-      Matter.Bodies.rectangle(p.x, p.y, p.ancho, p.alto, {
-        isStatic: true,
-        label: p.etiqueta ?? 'plataforma',
-      })
+  // Registro de todos los clientes WS (pantallas + gamepads)
+  const todosLosClientes = new Set<WebSocket>();
+
+  // ── Cargar plataformas del nivel en el motor ─────────
+  for (const plataforma of nivelConfig.plataformas) {
+    Matter.World.add(
+      mundo,
+      Matter.Bodies.rectangle(
+        plataforma.x, plataforma.y,
+        plataforma.ancho, plataforma.alto,
+        { isStatic: true, label: plataforma.etiqueta ?? 'plataforma' }
+      )
     );
   }
 
+  // ── Crear cajas físicas del nivel ────────────────────
+  // Las cajas son dinámicas (no isStatic): los jugadores pueden empujarlas
+  const cuerposCajas = crearCuerposCajas(nivelConfig.cajas);
+  for (const caja of cuerposCajas) {
+    Matter.World.add(mundo, caja);
+  }
+
+  // ── Crear cuerpo físico de la llave ──────────────────
   let cuerpoLlave: Matter.Body | null = Matter.Bodies.circle(
     nivelConfig.posicionLlave.x,
     nivelConfig.posicionLlave.y,
     18,
     { isStatic: true, isSensor: true, label: 'llave' }
   );
-  Matter.World.add(motor.mundo, cuerpoLlave);
+  Matter.World.add(mundo, cuerpoLlave);
 
+  // ── Hacer reaparecer la llave en su posición original ─
   function reaparecerLlave() {
     if (!cuerpoLlave) return;
+
     Matter.Body.setPosition(cuerpoLlave, {
       x: nivelConfig.posicionLlave.x,
       y: nivelConfig.posicionLlave.y,
     });
+
     estado.llaveEnJuego  = true;
     estado.llaveRecogida = false;
-    for (const j of estado.jugadores.values()) {
-      j.cargandoLlave = false;
+
+    for (const jugador of estado.jugadores.values()) {
+      jugador.cargandoLlave = false;
     }
   }
 
-  let ultimoTick = Date.now();
+  // ── Construir el snapshot que se envía cada tick ─────
+  // Incluye posiciones de jugadores Y cajas para dibujarse en el cliente
+  function construirSnapshot() {
+    return {
+      tipo:          'estado',
+      fase:          estado.fase,
+      nivelActual:   estado.nivelActual,
+      llaveEnJuego:  estado.llaveEnJuego,
+      llaveRecogida: estado.llaveRecogida,
+      llaveX: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.x : null,
+      llaveY: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.y : null,
+      jugadores: [...estado.jugadores.values()].map((j: Jugador) => ({
+        id:            j.id,
+        nombre:        j.nombre,
+        color:         j.color,
+        x:             j.cuerpoFisico.position.x,
+        y:             j.cuerpoFisico.position.y,
+        cargandoLlave: j.cargandoLlave,
+      })),
+      // Cajas: posición actualizada cada tick para que el cliente las dibuje
+      cajas: cuerposCajas.map(caja => ({
+        x:     caja.position.x,
+        y:     caja.position.y,
+        ancho: nivelConfig.cajas[0]?.ancho ?? 40, // todas las cajas del nivel tienen el mismo tamaño
+        alto:  nivelConfig.cajas[0]?.alto  ?? 40,
+      })),
+    };
+  }
+
+  // ── Bucle del juego (60 fps) ─────────────────────────
+  let momentoUltimoTick = Date.now();
 
   setInterval(() => {
-    const ahora = Date.now();
-    const delta = Math.min(ahora - ultimoTick, 50);
-    ultimoTick  = ahora;
+    const ahora       = Date.now();
+    const deltaMs     = Math.min(ahora - momentoUltimoTick, 50); // máx 50ms para evitar saltos
+    momentoUltimoTick = ahora;
 
-    for (const jugador of estado.jugadores.values()) {
-      const inputs  = inputsActivos.get(jugador.id) ?? new Set();
-      const enSuelo = estaEnSuelo(jugador.cuerpofisico, motor.motor);
-      aplicarMovimiento(jugador.cuerpofisico, inputs, enSuelo);
+    // 1. Aplicar movimiento a cada jugador según sus botones
+    //    CLAVE: se buscan los botones con idWS del jugador, no con id
+    for (const [idWS, jugador] of estado.jugadores.entries()) {
+      const botones = botonesPorIdWS.get(idWS) ?? new Set();
+      const enSuelo = estaEnSuelo(jugador.cuerpoFisico, mundo);
+      aplicarMovimiento(jugador.cuerpoFisico, botones, enSuelo);
     }
 
-    avanzarMotor(motor.motor, delta);
+    // 2. Avanzar la simulación física
+    avanzarMotor(motor, deltaMs);
 
-    const cantJugadores = estado.jugadores.size;
-    if (cantJugadores < MIN_PARA_GANAR) {
-      if (estado.llaveEnJuego) {
-        estado.llaveEnJuego = false;
-      }
+    // 3. La llave aparece solo si hay suficientes jugadores para ganar
+    //    Si hay menos jugadores, la llave desaparece (no se puede ganar)
+    const cantidadJugadores = estado.jugadores.size;
+
+    if (cantidadJugadores < MIN_JUGADORES_PARA_GANAR) {
+      estado.llaveEnJuego = false;
     } else if (!estado.llaveEnJuego && !estado.llaveRecogida) {
       estado.llaveEnJuego = true;
     }
 
-    // Alguien agarra la llave 
+    // 4. Detectar si alguien toca la llave
+    //    Solo posible con MIN_JUGADORES_PARA_GANAR conectados (por el punto 3)
     if (estado.llaveEnJuego && !estado.llaveRecogida && cuerpoLlave) {
       for (const jugador of estado.jugadores.values()) {
-        const dx = Math.abs(jugador.cuerpofisico.position.x - cuerpoLlave.position.x);
-        const dy = Math.abs(jugador.cuerpofisico.position.y - cuerpoLlave.position.y);
-        if (dx < 40 && dy < 50) {
+        const distanciaX = Math.abs(jugador.cuerpoFisico.position.x - cuerpoLlave.position.x);
+        const distanciaY = Math.abs(jugador.cuerpoFisico.position.y - cuerpoLlave.position.y);
+        const tocaLaLlave = distanciaX < 40 && distanciaY < 50;
+
+        if (tocaLaLlave) {
           jugador.cargandoLlave = true;
           estado.llaveRecogida  = true;
           estado.llaveEnJuego   = false;
-          io.emit('llave-recogida', { jugadorId: jugador.id, nombre: jugador.nombre });
+          enviarATodos(todosLosClientes, {
+            tipo:      'llave-recogida',
+            jugadorId: jugador.id,
+            nombre:    jugador.nombre,
+          });
           console.log(`🗝️  ${jugador.nombre} agarró la llave`);
           break;
         }
       }
     }
 
+    // 5. Si el portador de la llave cae al vacío → reaparece la llave
     for (const jugador of estado.jugadores.values()) {
-      if (jugador.cargandoLlave && jugador.cuerpofisico.position.y > nivelConfig.altoMundo + 100) {
+      const cayoAlVacio = jugador.cuerpoFisico.position.y > nivelConfig.altoMundo + 100;
+
+      if (jugador.cargandoLlave && cayoAlVacio) {
         console.log(`🗝️  ${jugador.nombre} cayó con la llave — reaparece`);
         reaparecerLlave();
-        io.emit('llave-reaparecio');
+        enviarATodos(todosLosClientes, { tipo: 'llave-reaparecio' });
         break;
       }
     }
 
+    // 6. Detectar si suficientes jugadores llegaron a la puerta con la llave
+    if (estado.fase === 'jugando') {
+      const puerta = nivelConfig.posicionPuerta;
 
-if (estado.fase === 'jugando') {
-  const puerta    = nivelConfig.posicionPuerta;
-  const jugadores = [...estado.jugadores.values()];
+      // Un jugador "entra" si está cerca de la puerta Y presiona arriba
+      const jugadoresEntrando = [...estado.jugadores.entries()].filter(([idWS, jugador]) => {
+        const botones        = botonesPorIdWS.get(idWS);
+        const presionaArriba = botones?.has('arriba') ?? false;
 
-  // Jugadores que están cerca de la puerta Y presionando arriba
-  const entrando = jugadores.filter(j => {
-    const inputs = inputsActivos.get(j.id);
-    if (!inputs?.has('arriba')) return false;
-    const dx = Math.abs(j.cuerpofisico.position.x - puerta.x);
-    const dy = Math.abs(j.cuerpofisico.position.y - puerta.y);
-    return dx < 60 && dy < 80;
-  });
+        const distanciaX    = Math.abs(jugador.cuerpoFisico.position.x - puerta.x);
+        const distanciaY    = Math.abs(jugador.cuerpoFisico.position.y - puerta.y);
+        const cercaDePuerta = distanciaX < 60 && distanciaY < 80;
 
-  // Cuenta como "en salida" a quien entró con arriba (tiene llave) o está cerca
-  // La puerta solo abre si alguien con la llave la activa primero
-  const hayLlaveEnPuerta = entrando.some(j => j.cargandoLlave);
+        return presionaArriba && cercaDePuerta;
+      }).map(([, jugador]) => jugador);
 
-  if (hayLlaveEnPuerta || estado.llaveRecogida) {
-    // Una vez que la llave llegó a la puerta, los demás también pueden entrar con arriba
-    if (entrando.length >= MIN_PARA_GANAR) {
-      estado.fase = 'nivel-completado';
-      io.emit('nivel-completado', { nivel: estado.nivelActual });
-      console.log(`Nivel ${estado.nivelActual} completado!`);
-    }
-  }
-}
+      const hayLlaveEnPuerta = jugadoresEntrando.some(j => j.cargandoLlave);
 
-    io.emit('estado', construirSnapshot(estado, cuerpoLlave));
-
-  }, TICK_RATE);
-
-  // Conexiones 
-  io.on('connection', (socket: Socket) => {
-    const tipo = socket.handshake.query.tipo;
-
-    if (tipo === 'pantalla') {
-      console.log('🖥️ Pantalla conectada');
-      socket.on('disconnect', (r) => console.log(`🖥️ Pantalla desconectada (${r})`));
-      return;
+      if (hayLlaveEnPuerta && jugadoresEntrando.length >= MIN_JUGADORES_PARA_GANAR) {
+        estado.fase = 'nivel-completado';
+        enviarATodos(todosLosClientes, { tipo: 'nivel-completado', nivel: estado.nivelActual });
+        console.log(`🏆 Nivel ${estado.nivelActual} completado!`);
+      }
     }
 
-    // Gamepad: verificar slots
-    if (slotsLibres.length === 0) {
-      socket.emit('partida-llena'); 
-      socket.disconnect();
-      console.log(`🚫 Partida llena — rechazado (${socket.id})`);
-      return;
-    }
+    // 7. Enviar snapshot de posiciones a todos (pantalla + gamepads)
+    enviarATodos(todosLosClientes, construirSnapshot());
 
-    const slotIndex = slotsLibres.shift()!;
-    const config    = CONFIGS_JUGADORES[slotIndex];
-    const spawn     = nivelConfig.posicionesIniciales[slotIndex];
-    const cuerpo    = crearCuerpoJugador(spawn.x, spawn.y, socket.id);
+  }, MS_POR_TICK);
 
-    Matter.World.add(motor.mundo, cuerpo);
+  // ── Manejo de conexiones WebSocket ───────────────────
+  servidorWS.on('connection', (cliente: WebSocket) => {
+    todosLosClientes.add(cliente);
 
-    const jugador: JugadorInterno = {
-      id:            socket.id,
-      nombre:        config.nombre,
-      color:         config.color,
-      cuerpofisico:  cuerpo,
-      conectado:     true,
-      cargandoLlave: false,
-      slotIndex,
-    };
+    // Esperar el primer mensaje para saber si es pantalla o gamepad
+    cliente.once('message', (mensajeRaw: Buffer) => {
+      let mensaje: any;
 
-    estado.jugadores.set(socket.id, jugador);
-    inputsActivos.set(socket.id, new Set());
-
-    socket.emit('bienvenido', {
-      id:     socket.id,
-      nombre: config.nombre,
-      color:  config.color,
-    });
-
-    console.log(`✅ ${config.nombre} (slot ${slotIndex}) conectado — slots libres: [${slotsLibres.join(', ')}]`);
-
-    socket.on('input', (data) => {
-      const inputs = inputsActivos.get(socket.id);
-      if (!inputs) return;
-      if (data.estado === 'presionado') inputs.add(data.direccion);
-      else                              inputs.delete(data.direccion);
-    });
-
-    socket.on('disconnect', () => {
-      const j = estado.jugadores.get(socket.id) as JugadorInterno | undefined;
-      if (!j) return;
-
-      console.log(`❌ ${j.nombre} desconectado`);
-
-      // Si tenía la llave, reaparecerla
-      if (j.cargandoLlave) {
-        reaparecerLlave();
-        io.emit('llave-reaparecio');
+      try {
+        mensaje = JSON.parse(mensajeRaw.toString());
+      } catch {
+        cliente.close();
+        return;
       }
 
-      Matter.World.remove(motor.mundo, j.cuerpofisico);
-      estado.jugadores.delete(socket.id);
-      inputsActivos.delete(socket.id);
+      // ── Pantalla del juego ──────────────────────────
+      if (mensaje.tipo === 'pantalla') {
+        console.log('🖥️  Pantalla conectada');
+        // Enviar la URL del servidor a la pantalla para mostrar el QR
+        enviar(cliente, { tipo: 'info-servidor', urlJuego });
 
-      // Devolver slot al pool, ordenado
-      slotsLibres.push(j.slotIndex);
-      slotsLibres.sort((a, b) => a - b);
+        cliente.on('close', () => {
+          todosLosClientes.delete(cliente);
+          console.log('🖥️  Pantalla desconectada');
+        });
+        return;
+      }
 
-      console.log(`   Slots libres: [${slotsLibres.join(', ')}]`);
-      io.emit('jugador-desconectado', { id: socket.id, nombre: j.nombre });
+      // ── Gamepad (jugador) ───────────────────────────
+      if (slotsLibres.length === 0) {
+        enviar(cliente, { tipo: 'partida-llena' });
+        cliente.close();
+        console.log('🚫 Partida llena — conexión rechazada');
+        return;
+      }
+
+      // Asignar slot y crear jugador
+      const slotIndex  = slotsLibres.shift()!;
+      const configSlot = CONFIGS_JUGADORES[slotIndex];
+      const spawn      = nivelConfig.posicionesIniciales[slotIndex];
+      const cuerpo     = crearCuerpoJugador(spawn.x, spawn.y, slotIndex.toString());
+
+      Matter.World.add(mundo, cuerpo);
+
+      // idWS: clave interna que usamos en los mapas del servidor
+      // id:   lo que se le manda al gamepad (mismo valor, más claro)
+      const idWS = `ws-${slotIndex}`;
+
+      const jugador: Jugador = {
+        id:            idWS,   // ← id y idWS son iguales para evitar confusión
+        nombre:        configSlot.nombre,
+        color:         configSlot.color,
+        cuerpoFisico:  cuerpo,
+        cargandoLlave: false,
+        slotIndex,
+      };
+
+      estado.jugadores.set(idWS, jugador);
+      botonesPorIdWS.set(idWS, new Set());
+
+      // Avisar al gamepad sus datos personales
+      enviar(cliente, {
+        tipo:   'bienvenido',
+        id:     idWS,
+        nombre: configSlot.nombre,
+        color:  configSlot.color,
+      });
+
+      // Desde el 1er jugador el mapa se muestra: fase 'jugando' siempre
+      // La llave solo aparece con MIN_JUGADORES_PARA_GANAR conectados (paso 3 del tick)
+      estado.fase = 'jugando';
+
+      console.log(`✅ ${configSlot.nombre} (slot ${slotIndex}) conectado — total: ${estado.jugadores.size}`);
+
+      // ── Recibir botones del gamepad ─────────────────
+      cliente.on('message', (rawInput: Buffer) => {
+        let input: any;
+        try {
+          input = JSON.parse(rawInput.toString());
+        } catch {
+          return;
+        }
+
+        if (input.tipo !== 'input') return;
+
+        // Buscar los botones de ESTE jugador usando idWS
+        const botones = botonesPorIdWS.get(idWS);
+        if (!botones) return;
+
+        if (input.estado === 'presionado') {
+          botones.add(input.direccion);
+        } else {
+          botones.delete(input.direccion);
+        }
+      });
+
+      // ── Desconexión del jugador ─────────────────────
+      cliente.on('close', () => {
+        todosLosClientes.delete(cliente);
+
+        const jugadorQueSeVa = estado.jugadores.get(idWS);
+        if (!jugadorQueSeVa) return;
+
+        console.log(`❌ ${jugadorQueSeVa.nombre} desconectado`);
+
+        // Si tenía la llave, reaparecerla para los demás
+        if (jugadorQueSeVa.cargandoLlave) {
+          reaparecerLlave();
+          enviarATodos(todosLosClientes, { tipo: 'llave-reaparecio' });
+        }
+
+        // Limpiar cuerpo físico y estado
+        Matter.World.remove(mundo, jugadorQueSeVa.cuerpoFisico);
+        estado.jugadores.delete(idWS);
+        botonesPorIdWS.delete(idWS);
+
+        // Devolver slot al pool para que otro jugador pueda usarlo
+        slotsLibres.push(slotIndex);
+        slotsLibres.sort((a, b) => a - b);
+
+        // Si quedan 0 jugadores, volver a esperar
+        if (estado.jugadores.size === 0) {
+          estado.fase = 'esperando';
+        }
+
+        enviarATodos(todosLosClientes, {
+          tipo:   'jugador-salio',
+          id:     idWS,
+          nombre: jugadorQueSeVa.nombre,
+        });
+      });
+    });
+
+    // Si el cliente cierra antes de identificarse
+    cliente.on('close', () => {
+      todosLosClientes.delete(cliente);
     });
   });
 
-  httpServer.listen(puerto, '0.0.0.0', () => {
-    console.log(`Servidor escuchando en puerto ${puerto}`);
+  // ── Arrancar el servidor ─────────────────────────────
+  servidorHttp.listen(puerto, '0.0.0.0', () => {
+    console.log(`✅ Servidor escuchando en puerto ${puerto}`);
   });
-}
-
-// Snapshot:
-function construirSnapshot(estado: any, cuerpoLlave: Matter.Body | null) {
-  return {
-    fase:          estado.fase,
-    nivelActual:   estado.nivelActual,
-    llaveEnJuego:  estado.llaveEnJuego,
-    llaveRecogida: estado.llaveRecogida,
-    // posición de la llave para dibujarla en el canvas
-    llaveX: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.x : null,
-    llaveY: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.y : null,
-    jugadores: [...estado.jugadores.values()].map((j: any) => ({
-      id:            j.id,
-      nombre:        j.nombre,
-      color:         j.color,
-      x:             j.cuerpofisico.position.x,
-      y:             j.cuerpofisico.position.y,
-      cargandoLlave: j.cargandoLlave,
-    })),
-  };
 }
 ===== ./servidor/fisica.ts =====
 
-import Matter from 'matter-js';
+// ============================================================
+//  fisica.ts  —  Motor de física (Matter.js)
+//  Centraliza todas las operaciones físicas del juego.
+// ============================================================
 
-const {
-  Engine,
-  Bodies,
-  Body,
-  World,
-  Composite,
-} = Matter;
+import Matter from 'matter-js';
+import type { Caja } from './configuracionNiveles';
+
+const { Engine, Bodies, Body, Composite } = Matter;
+
+// ── Crear motor y mundo ──────────────────────────────────
+// Devuelve el motor (Engine) Y el mundo (World) por separado
+// para evitar el error de TypeScript con motor.world
 
 export function crearMotorFisico() {
-
   const motor = Engine.create({
-    gravity: {
-      x: 0,
-      y: 1.4,
-    },
+    gravity: { x: 0, y: 2 },  // gravedad más notoria para caídas claras
   });
-
-  return {
-    motor,
-    mundo: motor.world,
-  };
+  const mundo = motor.world;
+  return { motor, mundo };
 }
 
-export function crearCuerpoJugador(
-  x: number,
-  y: number,
-  id: string,
-) {
+// ── Crear cuerpo físico de un jugador ───────────────────
+// Rectángulo de 36x54. inertia:Infinity evita que rote al apilarse.
 
-  return Bodies.rectangle(
-    x,
-    y,
-    40,
-    60,
-    {
-      label: `jugador-${id}`,
+export function crearCuerpoJugador(x: number, y: number, etiqueta: string) {
+  return Bodies.rectangle(x, y, 36, 54, {
+    label:       `jugador-${etiqueta}`,
+    friction:    0.1,
+    frictionAir: 0.02,
+    restitution: 0,      // sin rebote al aterrizar
+    inertia:     Infinity,
+  });
+}
 
-      friction: 0,
-      frictionAir: 0,
+// ── Crear cuerpos físicos de las cajas del nivel ─────────
+// Las cajas son dinámicas (no isStatic), así los jugadores las empujan.
+// Son más pesadas que los jugadores para no salir volando.
 
-      inertia: Infinity,
-    }
+export function crearCuerposCajas(cajas: Caja[]): Matter.Body[] {
+  return cajas.map((caja, indice) =>
+    Bodies.rectangle(caja.x, caja.y, caja.ancho, caja.alto, {
+      label:       `caja-${indice}`,
+      friction:    0.8,   // rozamiento alto: no se desliza sola
+      frictionAir: 0.05,
+      restitution: 0.1,
+      mass:        5,     // más pesada que el jugador (masa ~1)
+      inertia:     Infinity, // no rota al ser empujada
+    })
   );
 }
 
+// ── Aplicar movimiento según botones presionados ─────────
+// Se llama cada tick con el set de botones activos del jugador.
+
 export function aplicarMovimiento(
-  cuerpo: Matter.Body,
-  inputs: Set<string>,
+  cuerpo:  Matter.Body,
+  botones: Set<string>,
   enSuelo: boolean,
 ) {
+  const quiereIzquierda = botones.has('izquierda');
+  const quiereDerecha   = botones.has('derecha');
+  const quiereSaltar    = botones.has('salto');
 
-  let vx = cuerpo.velocity.x;
+  // Velocidad horizontal: –7 izquierda, +7 derecha, 0 quieto
+  let velocidadX = 0;
+  if (quiereIzquierda) velocidadX = -7;
+  if (quiereDerecha)   velocidadX =  7;
 
-  // MOVIMIENTO
-  if (inputs.has('izquierda')) {
-    vx = -7;
-  }
+  // Salto: solo se aplica si el jugador está en el suelo
+  const yaVaRapaArriba = cuerpo.velocity.y < -1;
+  const puedesSaltar   = quiereSaltar && enSuelo && !yaVaRapaArriba;
 
-  if (inputs.has('derecha')) {
-    vx = 7;
-  }
-
-  if (
-    !inputs.has('izquierda')
-    &&
-    !inputs.has('derecha')
-  ) {
-    vx = 0;
-  }
-
-  if (
-    inputs.has('salto')
-    &&
-    enSuelo
-    &&
-    Math.abs(cuerpo.velocity.y) < 1
-  ) {
-
-    Body.setVelocity(cuerpo, {
-      x: vx,
-      y: -13,
-    });
-
+  if (puedesSaltar) {
+    Body.setVelocity(cuerpo, { x: velocidadX, y: -15 });
     return;
   }
 
-  Body.setVelocity(cuerpo, {
-    x: vx,
-    y: cuerpo.velocity.y,
-  });
+  // Mantener la velocidad Y actual (gravedad la controla)
+  Body.setVelocity(cuerpo, { x: velocidadX, y: cuerpo.velocity.y });
 }
 
-export function estaEnSuelo(
-  cuerpo: Matter.Body,
-  motor: Matter.Engine,
-) {
+// ── Detectar si el jugador toca suelo u otra superficie ──
+// Revisa todos los cuerpos estáticos Y cajas (dinámicas pesadas).
 
-  const todos =
-    Composite.allBodies(motor.world);
+export function estaEnSuelo(cuerpo: Matter.Body, mundo: Matter.World): boolean {
+  const todosCuerpos = Composite.allBodies(mundo);
 
-  for (const otro of todos) {
+  // Pie del jugador: borde inferior
+  const pieY   = cuerpo.bounds.max.y;
+  const izqX   = cuerpo.bounds.min.x + 4;  // margen de 4px a cada lado
+  const derX   = cuerpo.bounds.max.x - 4;
 
-    if (otro === cuerpo) continue;
+  for (const otro of todosCuerpos) {
+    if (otro === cuerpo)  continue;
 
-    if (!otro.isStatic) continue;
+    // Solo suelo/plataformas (estáticas) y cajas (etiqueta 'caja-*')
+    const esSuelo = otro.isStatic;
+    const esCaja  = otro.label?.startsWith('caja-');
+    if (!esSuelo && !esCaja) continue;
 
-    const tocando =
-      cuerpo.bounds.max.y <= otro.bounds.min.y + 10
-      &&
-      cuerpo.bounds.max.y >= otro.bounds.min.y - 10
-      &&
-      cuerpo.bounds.max.x > otro.bounds.min.x
-      &&
-      cuerpo.bounds.min.x < otro.bounds.max.x;
+    const superficieTecho = otro.bounds.min.y;
+    const superficieIzq   = otro.bounds.min.x;
+    const superficieDer   = otro.bounds.max.x;
 
-    if (tocando) {
-      return true;
-    }
+    const tocaVertical    = pieY >= superficieTecho - 6 && pieY <= superficieTecho + 6;
+    const tocaHorizontal  = derX > superficieIzq && izqX < superficieDer;
+
+    if (tocaVertical && tocaHorizontal) return true;
   }
 
   return false;
 }
 
-export function avanzarMotor(
-  motor: Matter.Engine,
-  delta: number,
-) {
-  Engine.update(motor, delta);
+// ── Avanzar el motor un paso ─────────────────────────────
+
+export function avanzarMotor(motor: Matter.Engine, deltaMs: number) {
+  Engine.update(motor, deltaMs);
 }
 ===== ./servidor/configuracionNiveles.ts =====
 
+// ============================================================
+//  configuracionNiveles.ts  —  Definición de los dos niveles
+//
+//  Cada nivel tiene:
+//    - plataformas: estáticas, los jugadores caminan sobre ellas
+//    - cajas:       dinámicas, los jugadores pueden empujarlas
+//    - posicionesIniciales: dónde aparece cada jugador
+//    - posicionLlave:  dónde está la llave (solo visible con 3+ jugadores)
+//    - posicionPuerta: la salida del nivel
+// ============================================================
 
 export interface Plataforma {
-  x: number;
-  y: number;
-  ancho: number;
-  alto: number;
+  x:        number;
+  y:        number;
+  ancho:    number;
+  alto:     number;
   etiqueta?: string;
 }
 
-export interface ConfigNivel {
-  numero: number;
-  nombre: string;
-  anchoMundo: number;
-  altoMundo: number;
-  plataformas: Plataforma[];
-  posicionesIniciales: { x: number; y: number }[];
-  posicionLlave: { x: number; y: number };
-  posicionPuerta: { x: number; y: number };
-  descripcion: string;
+export interface Caja {
+  x:     number;
+  y:     number;
+  ancho: number;
+  alto:  number;
 }
 
-// Nivel 1: mapa simple
+export interface ConfigNivel {
+  numero:              number;
+  nombre:              string;
+  anchoMundo:          number;
+  altoMundo:           number;
+  plataformas:         Plataforma[];
+  cajas:               Caja[];
+  posicionesIniciales: { x: number; y: number }[];
+  posicionLlave:       { x: number; y: number };
+  posicionPuerta:      { x: number; y: number };
+}
+
+// ── Nivel 1: "El Puente" ──────────────────────────────────
+// Hay plataformas a distintas alturas. Para llegar arriba
+// hay que saltar. Las cajas sirven de escalón extra.
+// La llave está en la plataforma alta: se necesitan 3 jugadores.
 export const NIVEL_1: ConfigNivel = {
-  numero: 1,
-  nombre: 'El Puente',
+  numero:     1,
+  nombre:     'El Puente',
   anchoMundo: 1200,
-  altoMundo: 600,
-  descripcion: 'Lleguen a la llave y lleven a todos a la salida.',
+  altoMundo:  600,
+
   plataformas: [
-    { x: 600, y: 580, ancho: 1200, alto: 20, etiqueta: 'suelo' },
-    { x: 400, y: 420, ancho: 200, alto: 20, etiqueta: 'plataforma-media' },
-    { x: 900, y: 300, ancho: 200, alto: 20, etiqueta: 'plataforma-llave' },
-    { x: 0,    y: 300, ancho: 20, alto: 600, etiqueta: 'pared-izquierda' },
-    { x: 1200, y: 300, ancho: 20, alto: 600, etiqueta: 'pared-derecha' },
+    // Suelo principal (largo, abarca todo el nivel)
+    { x: 600,  y: 570, ancho: 1200, alto: 20, etiqueta: 'suelo'       },
+    // Plataforma media (hay que saltar para llegar)
+    { x: 380,  y: 420, ancho: 180,  alto: 20, etiqueta: 'plat-media'  },
+    // Plataforma alta (requiere apilarse o usar cajas para llegar)
+    { x: 850,  y: 290, ancho: 180,  alto: 20, etiqueta: 'plat-alta'   },
+    // Paredes que contienen el escenario
+    { x: 10,   y: 300, ancho: 20,   alto: 600, etiqueta: 'pared-izq'  },
+    { x: 1190, y: 300, ancho: 20,   alto: 600, etiqueta: 'pared-der'  },
   ],
+
+  // Dos cajas empujables: sirven de escalón para subir a plataformas
+  cajas: [
+    { x: 200, y: 530, ancho: 44, alto: 44 },
+    { x: 600, y: 530, ancho: 44, alto: 44 },
+  ],
+
   posicionesIniciales: [
-    { x: 100, y: 500 },
-    { x: 150, y: 500 },
-    { x: 200, y: 500 },
-    { x: 250, y: 500 },
+    { x: 80,  y: 510 },
+    { x: 140, y: 510 },
+    { x: 320, y: 510 },
+    { x: 380, y: 510 },
   ],
-  posicionLlave:  { x: 900, y: 260 },
-  posicionPuerta: { x: 1150, y: 520 },
+
+  posicionLlave:  { x: 850, y: 250 },
+  posicionPuerta: { x: 1140, y: 510 },
 };
 
-// Nivel 2: los jugadores deben apilarse para alcanzar la plataforma alta
+// ── Nivel 2: "La Torre" ──────────────────────────────────
+// Escenario más vertical. Hay un gap en el suelo (vacío),
+// una plataforma muy alta y una caja que el jugador puede
+// empujar al borde para caer del otro lado.
 export const NIVEL_2: ConfigNivel = {
-  numero: 2,
-  nombre: 'La Torre',
+  numero:     2,
+  nombre:     'La Torre',
   anchoMundo: 800,
-  altoMundo: 700,
-  descripcion: 'Apílense para alcanzar la llave en las alturas.',
+  altoMundo:  700,
+
   plataformas: [
-    { x: 400, y: 680, ancho: 800, alto: 20, etiqueta: 'suelo' },
-    { x: 200, y: 300, ancho: 160, alto: 20, etiqueta: 'plataforma-alta' },
-    { x: 650, y: 500, ancho: 200, alto: 20, etiqueta: 'plataforma-salida' },
-    { x: 0,   y: 350, ancho: 20, alto: 700, etiqueta: 'pared-izquierda' },
-    { x: 800, y: 350, ancho: 20, alto: 700, etiqueta: 'pared-derecha' },
+    // Suelo izquierdo (no llega hasta el centro → hay un vacío)
+    { x: 160,  y: 670, ancho: 320, alto: 20, etiqueta: 'suelo-izq'   },
+    // Suelo derecho
+    { x: 640,  y: 670, ancho: 320, alto: 20, etiqueta: 'suelo-der'   },
+    // Plataforma muy alta: solo se llega apilándose o con la caja
+    { x: 200,  y: 310, ancho: 160, alto: 20, etiqueta: 'plat-alta'   },
+    // Plataforma de salida (derecha, a media altura)
+    { x: 640,  y: 490, ancho: 200, alto: 20, etiqueta: 'plat-salida' },
+    // Paredes
+    { x: 10,   y: 350, ancho: 20,  alto: 700, etiqueta: 'pared-izq'  },
+    { x: 790,  y: 350, ancho: 20,  alto: 700, etiqueta: 'pared-der'  },
   ],
+
+  // Una caja grande: los jugadores deben empujarla al vacío del centro
+  // para que sirva de puente, o apilarla para llegar a la plataforma alta
+  cajas: [
+    { x: 200, y: 620, ancho: 44, alto: 44 },
+    { x: 260, y: 620, ancho: 44, alto: 44 },
+  ],
+
   posicionesIniciales: [
-    { x: 200, y: 600 },
-    { x: 250, y: 600 },
-    { x: 300, y: 600 },
-    { x: 350, y: 600 },
+    { x: 80,  y: 610 },
+    { x: 140, y: 610 },
+    { x: 200, y: 610 },
+    { x: 260, y: 610 },
   ],
-  posicionLlave:  { x: 200, y: 260 },
-  posicionPuerta: { x: 650, y: 450 },
+
+  posicionLlave:  { x: 200, y: 270 },
+  posicionPuerta: { x: 720, y: 430 },
 };
 
+// Lista ordenada: nivel 1 → índice 0, nivel 2 → índice 1
 export const NIVELES: ConfigNivel[] = [NIVEL_1, NIVEL_2];
 ===== ./servidor/tsconfig.json =====
 
@@ -1622,8 +2064,6 @@ export const NIVELES: ConfigNivel[] = [NIVEL_1, NIVEL_2];
   "dependencies": {
     "matter-js": "^0.20.0",
     "qrcode-terminal": "^0.12.0",
-    "socket.io": "^4.7.5",
-    "socket.io-client": "^4.7.5",
     "ws": "^8.21.0"
   },
   "devDependencies": {
@@ -1636,31 +2076,54 @@ export const NIVELES: ConfigNivel[] = [NIVEL_1, NIVEL_2];
 }
 ===== ./servidor/servidorIniciado.ts =====
 
-import os from 'os';
+// ============================================================
+//  servidorIniciado.ts  —  Punto de entrada del servidor
+//
+//  Arranca el servidor, detecta la IP local, genera el QR
+//  en la consola y pasa la URL al servidor WS para que la
+//  pantalla del juego también la muestre.
+// ============================================================
+
+import os     from 'os';
 import qrcode from 'qrcode-terminal';
+
 import { iniciarServidorWS } from './red';
 
 const PUERTO = 3000;
 
+// ── Obtener la IP local de la red ────────────────────────
 function obtenerIPLocal(): string {
   const interfaces = os.networkInterfaces();
+
   for (const nombre of Object.keys(interfaces)) {
     for (const iface of interfaces[nombre] ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
+      const esIPv4    = iface.family === 'IPv4';
+      const esExterna = !iface.internal;
+
+      if (esIPv4 && esExterna) {
         return iface.address;
       }
     }
   }
+
   return '127.0.0.1';
 }
 
-const ip       = obtenerIPLocal();
-const urlJuego = `http://${ip}:${PUERTO}`;
+const ipLocal  = obtenerIPLocal();
+const urlJuego = `http://${ipLocal}:${PUERTO}`;
 
-console.log('🎮 PicoPark - Servidor');
-console.log(`🌐 Página del juego: ${urlJuego}`);
-console.log('📱 Escaneá este QR:');
+// ── Mostrar datos de arranque en consola ─────────────────
+console.log('');
+console.log('🎮  PicoPark — Servidor');
+console.log(`🌐  Abrí esta URL en el navegador:  ${urlJuego}`);
+console.log(`📱  QR para el gamepad:`);
+console.log('');
 qrcode.generate(urlJuego, { small: true });
-console.log('⏳ Esperando jugadores (0/4)...');
+console.log(`⏳  Esperando jugadores (0/4)…`);
+console.log('    Con 1 jugador ya se puede explorar el mapa.');
+console.log(`    Con ${3} jugadores aparece la llave y se puede ganar.`);
+console.log('');
 
-iniciarServidorWS(PUERTO, `${import.meta.dir}/../pagDeJuego`);
+// ── Arrancar servidor ────────────────────────────────────
+// Se pasa la URL para que la pantalla del juego la muestre con el QR
+iniciarServidorWS(PUERTO, `${import.meta.dir}/../pagDeJuego`, urlJuego);

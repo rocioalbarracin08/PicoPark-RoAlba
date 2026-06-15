@@ -1,131 +1,92 @@
 import Matter from 'matter-js';
+import type { Caja } from './configuracionNiveles';
 
-const {
-  Engine,
-  Bodies,
-  Body,
-  World,
-  Composite,
-} = Matter;
+const { Engine, Bodies, Body, Composite } = Matter;
 
 export function crearMotorFisico() {
-
   const motor = Engine.create({
-    gravity: {
-      x: 0,
-      y: 1.4,
-    },
+    gravity: { x: 0, y: 2 },  
   });
-
-  return {
-    motor,
-    mundo: motor.world,
-  };
+  const mundo = motor.world;
+  return { motor, mundo };
 }
 
-export function crearCuerpoJugador(
-  x: number,
-  y: number,
-  id: string,
-) {
+export function crearCuerpoJugador(x: number, y: number, etiqueta: string) {
+  return Bodies.rectangle(x, y, 36, 54, {
+    label:       `jugador-${etiqueta}`,
+    friction:    0.1,
+    frictionAir: 0.02,
+    restitution: 0,      // sin rebote al aterrizar
+    inertia:     Infinity,
+  });
+}
 
-  return Bodies.rectangle(
-    x,
-    y,
-    40,
-    60,
-    {
-      label: `jugador-${id}`,
-
-      friction: 0,
-      frictionAir: 0,
-
-      inertia: Infinity,
-    }
+export function crearCuerposCajas(cajas: Caja[]): Matter.Body[] {
+  return cajas.map((caja, indice) =>
+    Bodies.rectangle(caja.x, caja.y, caja.ancho, caja.alto, {
+      label:       `caja-${indice}`,
+      friction:    0.8,   
+      frictionAir: 0.05,
+      restitution: 0.1,
+      mass:        5,     
+      inertia:     Infinity, // no rota al ser empujada
+    })
   );
 }
 
 export function aplicarMovimiento(
-  cuerpo: Matter.Body,
-  inputs: Set<string>,
+  cuerpo:  Matter.Body,
+  botones: Set<string>,
   enSuelo: boolean,
 ) {
+  const quiereIzquierda = botones.has('izquierda');
+  const quiereDerecha   = botones.has('derecha');
+  const quiereSaltar    = botones.has('salto');
 
-  let vx = cuerpo.velocity.x;
+  // Velocidad horizontal: –7 izquierda, +7 derecha, 0 quieto
+  let velocidadX = 0;
+  if (quiereIzquierda) velocidadX = -7;
+  if (quiereDerecha)   velocidadX =  7;
 
-  // MOVIMIENTO
-  if (inputs.has('izquierda')) {
-    vx = -7;
-  }
+  const yaVaRapaArriba = cuerpo.velocity.y < -1;
+  const puedesSaltar   = quiereSaltar && enSuelo && !yaVaRapaArriba;
 
-  if (inputs.has('derecha')) {
-    vx = 7;
-  }
-
-  if (
-    !inputs.has('izquierda')
-    &&
-    !inputs.has('derecha')
-  ) {
-    vx = 0;
-  }
-
-  if (
-    inputs.has('salto')
-    &&
-    enSuelo
-    &&
-    Math.abs(cuerpo.velocity.y) < 1
-  ) {
-
-    Body.setVelocity(cuerpo, {
-      x: vx,
-      y: -13,
-    });
-
+  if (puedesSaltar) {
+    Body.setVelocity(cuerpo, { x: velocidadX, y: -15 });
     return;
   }
 
-  Body.setVelocity(cuerpo, {
-    x: vx,
-    y: cuerpo.velocity.y,
-  });
+  Body.setVelocity(cuerpo, { x: velocidadX, y: cuerpo.velocity.y });
 }
 
-export function estaEnSuelo(
-  cuerpo: Matter.Body,
-  motor: Matter.Engine,
-) {
+export function estaEnSuelo(cuerpo: Matter.Body, mundo: Matter.World): boolean {
+  const todosCuerpos = Composite.allBodies(mundo);
 
-  const todos =
-    Composite.allBodies(motor.world);
+  // Pie del jugador: borde inferior
+  const pieY   = cuerpo.bounds.max.y;
+  const izqX   = cuerpo.bounds.min.x + 4;
+  const derX   = cuerpo.bounds.max.x - 4;
 
-  for (const otro of todos) {
+  for (const otro of todosCuerpos) {
+    if (otro === cuerpo)  continue;
 
-    if (otro === cuerpo) continue;
+    const esSuelo = otro.isStatic;
+    const esCaja  = otro.label?.startsWith('caja-');
+    if (!esSuelo && !esCaja) continue;
 
-    if (!otro.isStatic) continue;
+    const superficieTecho = otro.bounds.min.y;
+    const superficieIzq   = otro.bounds.min.x;
+    const superficieDer   = otro.bounds.max.x;
 
-    const tocando =
-      cuerpo.bounds.max.y <= otro.bounds.min.y + 10
-      &&
-      cuerpo.bounds.max.y >= otro.bounds.min.y - 10
-      &&
-      cuerpo.bounds.max.x > otro.bounds.min.x
-      &&
-      cuerpo.bounds.min.x < otro.bounds.max.x;
+    const tocaVertical    = pieY >= superficieTecho - 6 && pieY <= superficieTecho + 6;
+    const tocaHorizontal  = derX > superficieIzq && izqX < superficieDer;
 
-    if (tocando) {
-      return true;
-    }
+    if (tocaVertical && tocaHorizontal) return true;
   }
 
   return false;
 }
 
-export function avanzarMotor(
-  motor: Matter.Engine,
-  delta: number,
-) {
-  Engine.update(motor, delta);
+export function avanzarMotor(motor: Matter.Engine, deltaMs: number) {
+  Engine.update(motor, deltaMs);
 }

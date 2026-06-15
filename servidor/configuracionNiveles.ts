@@ -1,70 +1,91 @@
 
 export interface Plataforma {
-  x: number;
-  y: number;
-  ancho: number;
-  alto: number;
+  x:         number;
+  y:         number;
+  ancho:     number;
+  alto:      number;
   etiqueta?: string;
 }
 
-export interface ConfigNivel {
-  numero: number;
-  nombre: string;
-  anchoMundo: number;
-  altoMundo: number;
-  plataformas: Plataforma[];
-  posicionesIniciales: { x: number; y: number }[];
-  posicionLlave: { x: number; y: number };
-  posicionPuerta: { x: number; y: number };
-  descripcion: string;
+export interface Caja {
+  x:     number;
+  y:     number;
+  ancho: number;
+  alto:  number;
 }
 
-// Nivel 1: mapa simple
+export interface ConfigNivel {
+  numero:              number;
+  nombre:              string;
+  anchoMundo:          number;
+  altoMundo:           number;
+  plataformas:         Plataforma[];
+  cajas:               Caja[];
+  posicionesIniciales: { x: number; y: number }[];
+  posicionLlave:       { x: number; y: number };
+  posicionPuerta:      { x: number; y: number };
+}
+
 export const NIVEL_1: ConfigNivel = {
-  numero: 1,
-  nombre: 'El Puente',
+  numero:     1,
+  nombre:     'El Puente',
   anchoMundo: 1200,
-  altoMundo: 600,
-  descripcion: 'Lleguen a la llave y lleven a todos a la salida.',
+  altoMundo:  580,
+
   plataformas: [
-    { x: 600, y: 580, ancho: 1200, alto: 20, etiqueta: 'suelo' },
-    { x: 400, y: 420, ancho: 200, alto: 20, etiqueta: 'plataforma-media' },
-    { x: 900, y: 300, ancho: 200, alto: 20, etiqueta: 'plataforma-llave' },
-    { x: 0,    y: 300, ancho: 20, alto: 600, etiqueta: 'pared-izquierda' },
-    { x: 1200, y: 300, ancho: 20, alto: 600, etiqueta: 'pared-derecha' },
+    { x: 150,  y: 560, ancho: 280,  alto: 20, etiqueta: 'suelo-izq'  },
+    { x: 490,  y: 430, ancho: 160,  alto: 20, etiqueta: 'plat-media' },
+    { x: 900,  y: 560, ancho: 300,  alto: 20, etiqueta: 'suelo-der'  },
+    { x: 850,  y: 300, ancho: 160,  alto: 20, etiqueta: 'plat-alta'  },
+    { x: 10,   y: 290, ancho: 20,   alto: 580, etiqueta: 'pared-izq' },
+    { x: 1190, y: 290, ancho: 20,   alto: 580, etiqueta: 'pared-der' },
   ],
+
+  cajas: [
+    { x: 200, y: 515, ancho: 44, alto: 44 },
+    { x: 950, y: 515, ancho: 44, alto: 44 },
+  ],
+
   posicionesIniciales: [
-    { x: 100, y: 500 },
-    { x: 150, y: 500 },
-    { x: 200, y: 500 },
-    { x: 250, y: 500 },
+    { x: 80,  y: 510 },
+    { x: 130, y: 510 },
+    { x: 820, y: 510 },
+    { x: 870, y: 510 },
   ],
-  posicionLlave:  { x: 900, y: 260 },
-  posicionPuerta: { x: 1150, y: 520 },
+
+  posicionLlave:  { x: 850,  y: 260 },
+  posicionPuerta: { x: 1100, y: 500 },
 };
 
-// Nivel 2: los jugadores deben apilarse para alcanzar la plataforma alta
 export const NIVEL_2: ConfigNivel = {
-  numero: 2,
-  nombre: 'La Torre',
+  numero:     2,
+  nombre:     'La Torre',
   anchoMundo: 800,
-  altoMundo: 700,
-  descripcion: 'Apílense para alcanzar la llave en las alturas.',
+  altoMundo:  650,
+
   plataformas: [
-    { x: 400, y: 680, ancho: 800, alto: 20, etiqueta: 'suelo' },
-    { x: 200, y: 300, ancho: 160, alto: 20, etiqueta: 'plataforma-alta' },
-    { x: 650, y: 500, ancho: 200, alto: 20, etiqueta: 'plataforma-salida' },
-    { x: 0,   y: 350, ancho: 20, alto: 700, etiqueta: 'pared-izquierda' },
-    { x: 800, y: 350, ancho: 20, alto: 700, etiqueta: 'pared-derecha' },
+    { x: 150,  y: 630, ancho: 280, alto: 20, etiqueta: 'suelo-izq'   },
+    { x: 640,  y: 630, ancho: 280, alto: 20, etiqueta: 'suelo-der'   },
+    { x: 200,  y: 320, ancho: 160, alto: 20, etiqueta: 'plat-alta'   },
+    { x: 630,  y: 460, ancho: 200, alto: 20, etiqueta: 'plat-salida' },
+    { x: 10,   y: 325, ancho: 20,  alto: 650, etiqueta: 'pared-izq'  },
+    { x: 790,  y: 325, ancho: 20,  alto: 650, etiqueta: 'pared-der'  },
   ],
+
+  cajas: [
+    { x: 180, y: 585, ancho: 44, alto: 44 },
+    { x: 230, y: 585, ancho: 44, alto: 44 },
+  ],
+
   posicionesIniciales: [
-    { x: 200, y: 600 },
-    { x: 250, y: 600 },
-    { x: 300, y: 600 },
-    { x: 350, y: 600 },
+    { x: 80,  y: 580 },
+    { x: 130, y: 580 },
+    { x: 180, y: 580 },
+    { x: 230, y: 580 },
   ],
-  posicionLlave:  { x: 200, y: 260 },
-  posicionPuerta: { x: 650, y: 450 },
+
+  posicionLlave:  { x: 200, y: 280 },
+  posicionPuerta: { x: 710, y: 400 },
 };
 
 export const NIVELES: ConfigNivel[] = [NIVEL_1, NIVEL_2];

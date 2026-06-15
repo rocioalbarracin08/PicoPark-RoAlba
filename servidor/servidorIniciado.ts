@@ -1,28 +1,35 @@
-import os from 'os';
-import qrcode from 'qrcode-terminal';
+import os     from 'os';
 import { iniciarServidorWS } from './red';
 
 const PUERTO = 3000;
 
+// ── Obtener la IP local de la red ────────────────────────
 function obtenerIPLocal(): string {
   const interfaces = os.networkInterfaces();
+
   for (const nombre of Object.keys(interfaces)) {
     for (const iface of interfaces[nombre] ?? []) {
-      if (iface.family === 'IPv4' && !iface.internal) {
+      const esIPv4    = iface.family === 'IPv4';
+      const esExterna = !iface.internal;
+
+      if (esIPv4 && esExterna) {
         return iface.address;
       }
     }
   }
+
   return '127.0.0.1';
 }
 
-const ip       = obtenerIPLocal();
-const urlJuego = `http://${ip}:${PUERTO}`;
+const ipLocal  = obtenerIPLocal();
+const urlJuego = `http://${ipLocal}:${PUERTO}`;
 
-console.log('🎮 PicoPark - Servidor');
-console.log(`🌐 Página del juego: ${urlJuego}`);
-console.log('📱 Escaneá este QR:');
-qrcode.generate(urlJuego, { small: true });
-console.log('⏳ Esperando jugadores (0/4)...');
+// ── Mostrar datos de arranque en consola ─────────────────
+console.log('');
+console.log('🎮  PicoPark — Servidor');
+console.log(`🌐  Abrí esta URL en el navegador:  ${urlJuego}`);
+console.log(`⏳  Esperando jugadores…`);
+console.log('');
 
-iniciarServidorWS(PUERTO, `${import.meta.dir}/../pagDeJuego`);
+// Se pasa la URL para que la pantalla del juego la muestre con el QR
+iniciarServidorWS(PUERTO, `${import.meta.dir}/../pagDeJuego`, urlJuego);

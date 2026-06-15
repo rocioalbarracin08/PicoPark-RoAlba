@@ -1,10 +1,11 @@
 import React, { useState, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { PantallaConexion } from './screens/PantallaConexion';
-import { PantallaGamepad } from './screens/PantallaGamepad';
-import { Socket } from 'socket.io-client';
+import { View, StyleSheet }        from 'react-native';
+import { StatusBar }               from 'expo-status-bar';
 
+import { PantallaConexion } from './screens/PantallaConectarAlJuego';
+import { PantallaGamepad  } from './screens/ControlesJugador';
+
+// Datos que el servidor me devuelve al conectarnos
 export type InfoJugador = {
   id:     string;
   nombre: string;
@@ -12,40 +13,40 @@ export type InfoJugador = {
 };
 
 export default function App() {
-  const [servidorUrl, setServidorUrl]   = useState<string | null>(null);
-  const [infoJugador, setInfoJugador]   = useState<InfoJugador | null>(null);
-  const socketRef                       = useRef<Socket | null>(null);
+  const [infoJugador, setInfoJugador] = useState<InfoJugador | null>(null);
 
-  function handleConectado(url: string, info: InfoJugador, socket: Socket) {
-    socketRef.current = socket;
-    setServidorUrl(url);
+  // Guardamos el WebSocket para poder cerrarlo al desconectar
+  const wsRef = useRef<WebSocket | null>(null);
+
+  function alConectarse(info: InfoJugador, ws: WebSocket) {
+    wsRef.current = ws;
     setInfoJugador(info);
   }
 
-  function handleDesconectar() {
-    socketRef.current?.disconnect();
-    socketRef.current = null;
-    setServidorUrl(null);
+  function alDesconectarse() {
+    wsRef.current?.close();
+    wsRef.current = null;
     setInfoJugador(null);
   }
 
   return (
-    <View style={styles.contenedor}>
+    <View style={estilos.contenedor}>
       <StatusBar style="light" />
-      {!servidorUrl || !infoJugador ? (
-        <PantallaConexion onConectado={handleConectado} />
+
+      {!infoJugador ? (
+        <PantallaConexion onConectado={alConectarse} />
       ) : (
         <PantallaGamepad
-          socket={socketRef.current!}
+          ws={wsRef.current!}
           infoJugador={infoJugador}
-          onDesconectar={handleDesconectar}
+          onDesconectar={alDesconectarse}
         />
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const estilos = StyleSheet.create({
   contenedor: {
     flex:            1,
     backgroundColor: '#1a1a2e',
