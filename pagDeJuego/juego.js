@@ -1,6 +1,3 @@
-// juego.js — cliente del juego, WebSocket puro
-
-// ── DOM ──────────────────────────────────────────────────
 const canvas          = document.getElementById('canvas');
 const ctx             = canvas.getContext('2d');
 const elEstado        = document.getElementById('estado-conexion');
@@ -8,21 +5,17 @@ const elContador      = document.getElementById('contador-jugadores');
 const elInfoIP        = document.getElementById('info-ip');
 const elQR            = document.getElementById('qr-imagen');
 
-// El canvas debe ocupar exactamente el espacio de #zona-juego
 function ajustarCanvas() {
   canvas.width  = canvas.parentElement.clientWidth;
-  canvas.height = canvas.parentElement.clientHeight - 34; // menos la cabecera
+  canvas.height = canvas.parentElement.clientHeight - 34; 
 }
 window.addEventListener('resize', ajustarCanvas);
 ajustarCanvas();
 
-// ── Datos del mapa (deben coincidir con configuracionNiveles.ts) ──
-// IMPORTANTE: las plataformas tienen HUECOS entre ellas → el jugador CAE
-// No hay "suelo continuo", solo plataformas separadas con vacío entre sí.
 const NIVELES_DATOS = {
   1: {
     anchoMundo: 1200,
-    altoMundo:  580,
+    altoMundo:  570,
     // Plataformas separadas: hay vacíos entre ellas donde el jugador cae
     plataformas: [
       // Suelo izquierdo (no cubre todo el ancho → vacío en el centro)
@@ -30,9 +23,9 @@ const NIVELES_DATOS = {
       // Plataforma media (hay que saltar)
       { x: 490,  y: 430, ancho: 160,  alto: 20 },
       // Suelo derecho
-      { x: 900,  y: 560, ancho: 300,  alto: 20 },
-      // Plataforma alta (requiere saltar desde la media)
-      { x: 850,  y: 300, ancho: 160,  alto: 20 },
+      { x: 1000,  y: 560, ancho: 520,  alto: 20 },
+      // Plataforma alta (requiere saltar desde la media — bajada para ser alcanzable)
+      { x: 850,  y: 380, ancho: 160,  alto: 20 },
       // Paredes laterales (contienen el escenario)
       { x: 10,   y: 290, ancho: 20,   alto: 580 },
       { x: 1190, y: 290, ancho: 20,   alto: 580 },
@@ -41,8 +34,8 @@ const NIVELES_DATOS = {
       { x: 200, y: 515, ancho: 44, alto: 44 },
       { x: 950, y: 515, ancho: 44, alto: 44 },
     ],
-    posicionPuerta: { x: 1100, y: 500 },
-    posicionLlave:  { x: 850,  y: 260 },
+    posicionPuerta: { x: 1100, y: 550 },  // apoya sobre suelo derecho (y:560 alto:20 → tope en 550)
+    posicionLlave:  { x: 850,  y: 340 },  // encima de la plataforma alta (y:380)
   },
   2: {
     anchoMundo: 800,
@@ -69,10 +62,8 @@ const NIVELES_DATOS = {
   },
 };
 
-// ── Estado del juego ─────────────────────────────────────
 let estadoActual = null;
 
-// ── Generar QR en el panel lateral ──────────────────────
 function mostrarQR(url) {
   elInfoIP.textContent = url.replace('http://', '');
   elQR.innerHTML = '';
@@ -187,11 +178,12 @@ function dibujarPuerta(px, py, eX, eY, abierta) {
   ctx.fillRect(x, y, w, h);
   ctx.strokeRect(x, y, w, h);
 
+  // Texto pequeño para que entre en la puerta (48px de ancho)
   ctx.fillStyle    = 'white';
-  ctx.font         = `bold ${Math.max(10, 11 * Math.min(eX, eY))}px monospace`;
+  ctx.font         = `bold ${Math.max(7, 8 * Math.min(eX, eY))}px monospace`;
   ctx.textAlign    = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(abierta ? 'META' : 'CERR', px * eX, (py - 30) * eY);
+  ctx.fillText(abierta ? 'META' : 'SALIR', px * eX, (py - 30) * eY);
   ctx.textBaseline = 'alphabetic';
 }
 
@@ -253,7 +245,6 @@ function dibujarJugador(j, eX, eY) {
   }
 }
 
-// ── Bucle de dibujo ──────────────────────────────────────
 function dibujar() {
   requestAnimationFrame(dibujar);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -269,8 +260,6 @@ function dibujar() {
   ctx.fillStyle = COLOR_VACIO;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Rectángulo de "suelo del mundo" solo debajo de las plataformas más bajas
-  // (no hay agua ni suelo continuo, solo plataformas flotantes con vacío entre ellas)
   ctx.fillStyle = COLOR_FONDO;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -281,29 +270,26 @@ function dibujar() {
   ctx.fillStyle = COLOR_VACIO;
   ctx.fillRect(0, yPisoMundo - 1, canvas.width, canvas.height - yPisoMundo + 1);
 
-  // Indicador de nivel
-  ctx.fillStyle    = 'rgba(255,255,255,0.6)';
-  ctx.font         = `bold ${Math.max(12, 15 * eX)}px monospace`;
-  ctx.textAlign    = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(`NIVEL ${numNivel}`, 12, 8);
-  ctx.textBaseline = 'alphabetic';
-
-  // Plataformas
+  // Plataformas (se dibujan ANTES del texto para que el texto quede encima)
   for (const p of nivel.plataformas) {
     dibujarPlataforma(p, eX, eY);
   }
 
+  ctx.fillStyle    = 'rgba(255,255,255,0.75)';
+  ctx.font         = `bold ${Math.max(12, 15 * eX)}px monospace`;
+  ctx.textAlign    = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText(`NIVEL ${numNivel}`, 34, 8);
+  ctx.textBaseline = 'alphabetic';
+
   if (!estadoActual) return;
 
-  // Cajas (posición viene del servidor, se actualiza en tiempo real)
   if (estadoActual.cajas) {
     for (const caja of estadoActual.cajas) {
       dibujarCaja(caja, eX, eY);
     }
   }
 
-  // Puerta
   dibujarPuerta(
     nivel.posicionPuerta.x,
     nivel.posicionPuerta.y,
@@ -311,12 +297,10 @@ function dibujar() {
     estadoActual.llaveRecogida
   );
 
-  // Llave (solo si hay 3+ jugadores)
   if (estadoActual.llaveEnJuego && estadoActual.llaveX != null) {
     dibujarLlave(estadoActual.llaveX, estadoActual.llaveY, eX, eY);
   }
 
-  // Jugadores
   for (const j of estadoActual.jugadores) {
     dibujarJugador(j, eX, eY);
   }

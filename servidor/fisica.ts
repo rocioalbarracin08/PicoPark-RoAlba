@@ -88,5 +88,10 @@ export function estaEnSuelo(cuerpo: Matter.Body, mundo: Matter.World): boolean {
 }
 
 export function avanzarMotor(motor: Matter.Engine, deltaMs: number) {
-  Engine.update(motor, deltaMs);
+  const PASO_MAX = 16;
+  let restante = deltaMs;
+  while (restante > 0) {
+    Engine.update(motor, Math.min(restante, PASO_MAX));
+    restante -= PASO_MAX;
+  }
 }
