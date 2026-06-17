@@ -210,18 +210,26 @@ for (const [idWS, jugador] of estado.jugadores.entries()) {
       }
     }
 
-    //Si el portador de la llave cae al vacío, reaparece la llave
+    //Si cualquier jugador cae al vacío → respawn en su posición inicial
     for (const jugador of estado.jugadores.values()) {
       const cayoAlVacio = jugador.cuerpoFisico.position.y > nivelConfig.altoMundo + 100;
+      if (!cayoAlVacio) continue;
 
-      if (jugador.cargandoLlave && cayoAlVacio) {
-        console.log(`🗝️  ${jugador.nombre} cayó con la llave — reaparece`);
+      // Si tenía la llave, reaparecerla para que otros puedan agarrarla
+      if (jugador.cargandoLlave) {
+        jugador.cargandoLlave = false;
         reaparecerLlave();
         enviarATodos(todosLosClientes, { tipo: 'llave-reaparecio' });
-        break;
       }
-    }
 
+      // Volver al punto de spawn del slot de este jugador
+      const spawn = nivelConfig.posicionesIniciales[jugador.slotIndex];
+      Matter.Body.setPosition(jugador.cuerpoFisico, { x: spawn.x, y: spawn.y });
+      Matter.Body.setVelocity(jugador.cuerpoFisico, { x: 0, y: 0 });
+
+      console.log(`💀 ${jugador.nombre} cayó al vacío — respawn en (${spawn.x}, ${spawn.y})`);
+    }
+    
     //Detectar si suficientes jugadores llegaron a la puerta con la llave
     if (estado.fase === 'jugando') {
       const puerta = nivelConfig.posicionPuerta;
