@@ -5,15 +5,23 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "platforms": ["android", "ios"],
+    "platforms": [
+      "android",
+      "ios"
+    ],
     "plugins": [
       [
         "expo-camera",
-        { "cameraPermission": "Necesitamos la cámara para escanear el QR del juego." }
-      ]
+        {
+          "cameraPermission": "Necesitamos la cámara para escanear el QR del juego."
+        }
+      ],
+      "expo-build-properties"
     ],
     "android": {
-      "adaptiveIcon": { "backgroundColor": "#1a1a2e" },
+      "adaptiveIcon": {
+        "backgroundColor": "#1a1a2e"
+      },
       "package": "com.picopark.gamepad",
       "usesCleartextTraffic": true
     },

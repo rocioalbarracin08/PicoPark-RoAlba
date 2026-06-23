@@ -1,9 +1,8 @@
-import React, { useState, useRef } from 'react';
-import { View, StyleSheet }        from 'react-native';
-import { StatusBar }               from 'expo-status-bar';
+import React, { useState, useRef } from 'react';import { StatusBar }               from 'expo-status-bar';
 
 import { PantallaConexion } from './screens/PantallaConectarAlJuego';
 import { PantallaGamepad  } from './screens/ControlesJugador';
+import { AppLayout } from './screens/AppLayout';
 
 // Datos que el servidor me devuelve al conectarnos
 export type InfoJugador = {
@@ -30,7 +29,7 @@ export default function App() {
   }
 
   return (
-    <View >
+    <AppLayout >
       <StatusBar style="light" />
 
       {!infoJugador ? (
@@ -42,7 +41,6 @@ export default function App() {
           onDesconectar={alDesconectarse}
         />
       )}
-    </View>
+    </AppLayout>
   );
 }
-
