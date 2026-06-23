@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';import { StatusBar }               from 'expo-status-bar';
+import React, { useState, useRef } from 'react';
+import { StatusBar } from 'expo-status-bar';
 
 import { PantallaConexion } from './screens/PantallaConectarAlJuego';
 import { PantallaGamepad  } from './screens/ControlesJugador';

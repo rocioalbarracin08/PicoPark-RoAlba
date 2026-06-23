@@ -5,37 +5,56 @@ const { Engine, Bodies, Body, Composite } = Matter;
 
 export function crearMotorFisico() {
   const motor = Engine.create({
-    gravity: { x: 0, y: 2 },
+    gravity: { x: 0, y: 2 },  
   });
   const mundo = motor.world;
   return { motor, mundo };
 }
 
 export function crearCuerpoJugador(x: number, y: number, etiqueta: string) {
-  return Bodies.rectangle(x, y, 36, 54, {
-    label:       `jugador-${etiqueta}`,
-    friction:    0.05,   // menos fricción con suelo → más responsivo
-    frictionAir: 0.08,   // subido de 0.02 → frena naturalmente al soltar
+  const W = 36;
+  const H = 54;
+
+  // 1. Cuerpo principal del jugador (el que colisiona con el entorno)
+  const cuerpoPrincipal = Bodies.rectangle(x, y, W, H, {
+    friction: 0.01,
+    frictionAir: 0.02,
     restitution: 0,
-    inertia:     Infinity,
+    inertia: Infinity, // Evita que el personaje gire de cabeza
   });
+
+  // 2. Sensor de pies: un micro-rectángulo debajo del cuerpo principal
+  // Es más angosto (W - 6) para que pegarse a una pared no active el sensor
+  const sensorPies = Bodies.rectangle(x, y + H / 2, W - 6, 4, {
+    isSensor: true, // No empuja cosas, actúa como disparador de lógica
+    label: `sensor-pies-${etiqueta}`
+  });
+
+  // 3. Crear un cuerpo compuesto uniendo ambos componentes
+  const cuerpoCompuesto = Body.create({
+    parts: [cuerpoPrincipal, sensorPies],
+    label: `jugador-${etiqueta}`,
+    friction: 0.01,
+    frictionAir: 0.02,
+    restitution: 0,
+    inertia: Infinity,
+  });
+
+  return cuerpoCompuesto;
 }
 
 export function crearCuerposCajas(cajas: Caja[]): Matter.Body[] {
   return cajas.map((caja, indice) =>
     Bodies.rectangle(caja.x, caja.y, caja.ancho, caja.alto, {
       label:       `caja-${indice}`,
-      friction:    0.8,
+      friction:    0.8,   
       frictionAir: 0.05,
       restitution: 0.1,
-      mass:        5,
-      inertia:     Infinity,
+      mass:        5,     
+      inertia:     Infinity, // no rota al ser empujada
     })
   );
 }
-
-const FUERZA_MOVIMIENTO = 0.025; // fuerza horizontal por tick
-const VELOCIDAD_MAX_X   = 7;     // tope de velocidad en X (px/tick)
 
 export function aplicarMovimiento(
   cuerpo:  Matter.Body,
@@ -46,53 +65,49 @@ export function aplicarMovimiento(
   const quiereDerecha   = botones.has('derecha');
   const quiereSaltar    = botones.has('salto');
 
-  // ✅ Movimiento horizontal con applyForce en vez de setVelocity.
-  // Matter integra la fuerza junto con gravedad y colisiones → sin estados corruptos.
-  if (quiereIzquierda) {
-    Body.applyForce(cuerpo, cuerpo.position, { x: -FUERZA_MOVIMIENTO, y: 0 });
-  } else if (quiereDerecha) {
-    Body.applyForce(cuerpo, cuerpo.position, { x: FUERZA_MOVIMIENTO, y: 0 });
-  } else {
-    // Sin input horizontal → frenar rápido en X, sin tocar Y
-    Body.setVelocity(cuerpo, {
-      x: cuerpo.velocity.x * 0.6,
-      y: cuerpo.velocity.y,
-    });
+  let velocidadX = 0;
+  if (quiereIzquierda) velocidadX = -7;
+  if (quiereDerecha)   velocidadX =  7;
+
+  // Si quiere saltar y el sensor detectó suelo, aplicamos el impulso vertical directo
+  if (quiereSaltar && enSuelo) {
+    Body.setVelocity(cuerpo, { x: velocidadX, y: -15 });
+    return;
   }
 
-  // Limitar velocidad máxima en X para que no acelere infinito
-  if (Math.abs(cuerpo.velocity.x) > VELOCIDAD_MAX_X) {
-    Body.setVelocity(cuerpo, {
-      x: Math.sign(cuerpo.velocity.x) * VELOCIDAD_MAX_X,
-      y: cuerpo.velocity.y,
-    });
-  }
-
-  // ✅ Salto: solo tocamos Y, solo cuando el jugador está en el suelo
-  const yaVaParaArriba = cuerpo.velocity.y < -1;
-  if (quiereSaltar && enSuelo && !yaVaParaArriba) {
-    Body.setVelocity(cuerpo, { x: cuerpo.velocity.x, y: -15 });
-  }
+  // Si no está saltando, mantiene la velocidad lateral y respeta la caída física de Y
+  Body.setVelocity(cuerpo, { x: velocidadX, y: cuerpo.velocity.y });
 }
 
 export function estaEnSuelo(cuerpo: Matter.Body, mundo: Matter.World): boolean {
-  // ✅ Usar Matter.Query.point en vez de comparar bounding boxes manualmente.
-  // Query usa la misma lógica interna que Matter → más preciso y confiable.
-  const pieY = cuerpo.bounds.max.y + 3; // 3px debajo del pie
-  const izqX = cuerpo.bounds.min.x + 6;
-  const derX = cuerpo.bounds.max.x - 6;
+  const todosCuerpos = Composite.allBodies(mundo);
 
-  // Ignoramos el propio cuerpo del jugador en la query
-  const otrosCuerpos = Composite.allBodies(mundo).filter(b => b !== cuerpo);
+  // Buscamos la parte del cuerpo compuesto que corresponde al sensor de pies
+  const miSensor = cuerpo.parts.find(part => part.label?.startsWith('sensor-pies-'));
+  if (!miSensor) return false;
 
-  const colIzq = Matter.Query.point(otrosCuerpos, { x: izqX, y: pieY });
-  const colDer = Matter.Query.point(otrosCuerpos, { x: derX, y: pieY });
+  // Verificamos de forma nativa qué cuerpos están chocando/superpuestos con el sensor
+  const colisiones = Matter.Query.collides(miSensor, todosCuerpos);
 
-  return colIzq.length > 0 || colDer.length > 0;
+  for (const colision of colisiones) {
+    // Descartamos colisiones con el propio jugador o sus subpartes
+    if (colision.bodyA === cuerpo || colision.bodyB === cuerpo) continue;
+
+    const otroCuerpo = colision.bodyA === miSensor ? colision.bodyB : colision.bodyA;
+
+    // Si toca una plataforma estática o una caja, el piso es válido
+    const esSuelo = otroCuerpo.isStatic;
+    const esCaja = otroCuerpo.label?.startsWith('caja-');
+
+    if (esSuelo || esCaja) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function avanzarMotor(motor: Matter.Engine, deltaMs: number) {
-  // ✅ Pasos fijos — correcto, no modificar
   const PASO_MAX = 16;
   let restante = deltaMs;
   while (restante > 0) {
