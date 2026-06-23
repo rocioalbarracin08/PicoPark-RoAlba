@@ -30,7 +30,7 @@ export default function App() {
   }
 
   return (
-    <View style={estilos.contenedor}>
+    <View >
       <StatusBar style="light" />
 
       {!infoJugador ? (
@@ -46,9 +46,3 @@ export default function App() {
   );
 }
 
-const estilos = StyleSheet.create({
-  contenedor: {
-    flex:            1,
-    backgroundColor: '#1a1a2e',
-  },
-});

@@ -12,44 +12,35 @@ function ajustarCanvas() {
 window.addEventListener('resize', ajustarCanvas);
 ajustarCanvas();
 
+// REEMPLAZÁ el objeto NIVELES_DATOS completo en juego.js por este bloque:
+
 const NIVELES_DATOS = {
   1: {
     anchoMundo: 1200,
-    altoMundo:  570,
-    // Plataformas separadas: hay vacíos entre ellas donde el jugador cae
+    altoMundo:  580,
     plataformas: [
-      // Suelo izquierdo (no cubre todo el ancho → vacío en el centro)
-      { x: 150,  y: 560, ancho: 280,  alto: 20 },
-      // Plataforma media (hay que saltar)
-      { x: 490,  y: 430, ancho: 160,  alto: 20 },
-      // Suelo derecho
-      { x: 1000,  y: 560, ancho: 520,  alto: 20 },
-      // Plataforma alta (requiere saltar desde la media — bajada para ser alcanzable)
-      { x: 850,  y: 380, ancho: 160,  alto: 20 },
-      // Paredes laterales (contienen el escenario)
-      { x: 10,   y: 290, ancho: 20,   alto: 580 },
-      { x: 1190, y: 290, ancho: 20,   alto: 580 },
+      { x: 150,  y: 560, ancho: 280, alto: 20 },  // suelo-izq
+      { x: 490,  y: 430, ancho: 160, alto: 20 },  // plat-media
+      { x: 965,  y: 560, ancho: 430, alto: 20 },  // suelo-der ← extendido, cubre x=750..1180
+      { x: 850,  y: 380, ancho: 160, alto: 20 },  // plat-alta ← bajada a y=380
+      { x: 10,   y: 290, ancho: 20,  alto: 580 }, // pared-izq
+      { x: 1190, y: 290, ancho: 20,  alto: 580 }, // pared-der
     ],
     cajas: [
       { x: 200, y: 515, ancho: 44, alto: 44 },
       { x: 950, y: 515, ancho: 44, alto: 44 },
     ],
-    posicionPuerta: { x: 1100, y: 550 },  // apoya sobre suelo derecho (y:560 alto:20 → tope en 550)
-    posicionLlave:  { x: 850,  y: 340 },  // encima de la plataforma alta (y:380)
+    posicionPuerta: { x: 1100, y: 550 },  // ← y=550, apoya sobre suelo-der
+    posicionLlave:  { x: 850,  y: 340 },  // ← encima de plat-alta (y=380)
   },
   2: {
     anchoMundo: 800,
     altoMundo:  650,
     plataformas: [
-      // Suelo izquierdo
       { x: 150,  y: 630, ancho: 280, alto: 20 },
-      // Suelo derecho (vacío en el centro → si caés entre los dos, perdés)
       { x: 640,  y: 630, ancho: 280, alto: 20 },
-      // Plataforma muy alta (se llega apilándose o con caja)
       { x: 200,  y: 320, ancho: 160, alto: 20 },
-      // Plataforma de salida
       { x: 630,  y: 460, ancho: 200, alto: 20 },
-      // Paredes
       { x: 10,   y: 325, ancho: 20,  alto: 650 },
       { x: 790,  y: 325, ancho: 20,  alto: 650 },
     ],

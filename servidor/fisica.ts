@@ -78,7 +78,8 @@ export function estaEnSuelo(cuerpo: Matter.Body, mundo: Matter.World): boolean {
     const superficieIzq   = otro.bounds.min.x;
     const superficieDer   = otro.bounds.max.x;
 
-    const tocaVertical    = pieY >= superficieTecho - 6 && pieY <= superficieTecho + 6;
+    const tocaVertical = pieY >= superficieTecho - 12 && pieY <= superficieTecho + 12;
+    
     const tocaHorizontal  = derX > superficieIzq && izqX < superficieDer;
 
     if (tocaVertical && tocaHorizontal) return true;

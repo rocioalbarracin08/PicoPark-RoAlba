@@ -1,4 +1,3 @@
-
 export interface Plataforma {
   x:         number;
   y:         number;
@@ -35,8 +34,8 @@ export const NIVEL_1: ConfigNivel = {
   plataformas: [
     { x: 150,  y: 560, ancho: 280,  alto: 20, etiqueta: 'suelo-izq'  },
     { x: 490,  y: 430, ancho: 160,  alto: 20, etiqueta: 'plat-media' },
-    { x: 900,  y: 560, ancho: 300,  alto: 20, etiqueta: 'suelo-der'  },
-    { x: 850,  y: 300, ancho: 160,  alto: 20, etiqueta: 'plat-alta'  },
+    { x: 965,  y: 560, ancho: 430,  alto: 20, etiqueta: 'suelo-der'  }, // ← extendido hasta x=1180 para cubrir la puerta
+    { x: 850,  y: 380, ancho: 160,  alto: 20, etiqueta: 'plat-alta'  }, // ← bajada de 300 a 380 para ser alcanzable
     { x: 10,   y: 290, ancho: 20,   alto: 580, etiqueta: 'pared-izq' },
     { x: 1190, y: 290, ancho: 20,   alto: 580, etiqueta: 'pared-der' },
   ],
@@ -53,8 +52,8 @@ export const NIVEL_1: ConfigNivel = {
     { x: 870, y: 510 },
   ],
 
-  posicionLlave:  { x: 850,  y: 260 },
-  posicionPuerta: { x: 1100, y: 500 },
+  posicionLlave:  { x: 850, y: 340 }, // ← encima de plat-alta (y=380, superficie=370, llave flota 30px arriba)
+  posicionPuerta: { x: 1100, y: 550 }, // ← y=550 = superficie del suelo-der, puerta apoya en el piso
 };
 
 export const NIVEL_2: ConfigNivel = {

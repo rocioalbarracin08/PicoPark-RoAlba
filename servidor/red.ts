@@ -226,8 +226,6 @@ for (const [idWS, jugador] of estado.jugadores.entries()) {
       const spawn = nivelConfig.posicionesIniciales[jugador.slotIndex];
       Matter.Body.setPosition(jugador.cuerpoFisico, { x: spawn.x, y: spawn.y });
       Matter.Body.setVelocity(jugador.cuerpoFisico, { x: 0, y: 0 });
-
-      console.log(`💀 ${jugador.nombre} cayó al vacío — respawn en (${spawn.x}, ${spawn.y})`);
     }
     
     //Detectar si suficientes jugadores llegaron a la puerta con la llave
