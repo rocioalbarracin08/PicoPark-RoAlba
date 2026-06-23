@@ -15,13 +15,13 @@ export function crearCuerpoJugador(x: number, y: number, etiqueta: string) {
   const W = 36;
   const H = 54;
 
-  // 1. Cuerpo principal del jugador (el que colisiona con el entorno)
   const cuerpoPrincipal = Bodies.rectangle(x, y, W, H, {
-    friction: 0.01,
-    frictionAir: 0.02,
-    restitution: 0,
-    inertia: Infinity, // Evita que el personaje gire de cabeza
-  });
+      friction: 0,          // ← CAMBIADO de 0.01 a 0
+      frictionStatic: 0,    // ← AGREGADO
+      frictionAir: 0.02,
+      restitution: 0,
+      inertia: Infinity, 
+    });
 
   // 2. Sensor de pies: un micro-rectángulo debajo del cuerpo principal
   // Es más angosto (W - 6) para que pegarse a una pared no active el sensor
