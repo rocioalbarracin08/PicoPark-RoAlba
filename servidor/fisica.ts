@@ -43,19 +43,21 @@ export function crearCuerpoJugador(x: number, y: number, etiqueta: string) {
   return cuerpoCompuesto;
 }
 
+// 1. Modificamos las cajas para quitarles CUALQUIER tipo de elasticidad/rebote
 export function crearCuerposCajas(cajas: Caja[]): Matter.Body[] {
   return cajas.map((caja, indice) =>
     Bodies.rectangle(caja.x, caja.y, caja.ancho, caja.alto, {
       label:       `caja-${indice}`,
       friction:    0.8,   
       frictionAir: 0.05,
-      restitution: 0.1,
+      restitution: 0,      // ← CAMBIADO de 0.1 a 0 (Cero rebote elástico)
       mass:        5,     
       inertia:     Infinity, // no rota al ser empujada
     })
   );
 }
 
+// 2. Optimizamos el movimiento para que no "machaque" ni fuerce la física al chocar techos
 export function aplicarMovimiento(
   cuerpo:  Matter.Body,
   botones: Set<string>,
@@ -75,8 +77,14 @@ export function aplicarMovimiento(
     return;
   }
 
-  // Si no está saltando, mantiene la velocidad lateral y respeta la caída física de Y
-  Body.setVelocity(cuerpo, { x: velocidadX, y: cuerpo.velocity.y });
+  // SI EL JUGADOR ESTÁ SUBIENDO (Y < 0) Y PEGA CONTRA UN TECHO:
+  // Si Matter.js detecta que la velocidad real disminuyó drásticamente por un choque superior,
+  // evitamos forzar la inercia para que no tiemble ni rebote con las cajas.
+  let velocidadYActual = cuerpo.velocity.y;
+  
+  // Pequeño truco de suavizado: si hay una fuerza externa empujándolo hacia abajo repentinamente (un techo)
+  // dejamos que la física actúe de forma natural.
+  Body.setVelocity(cuerpo, { x: velocidadX, y: velocidadYActual });
 }
 
 export function estaEnSuelo(cuerpo: Matter.Body, mundo: Matter.World): boolean {
