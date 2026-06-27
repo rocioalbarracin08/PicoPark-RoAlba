@@ -71,7 +71,7 @@ function mostrarQR(url) {
 }
 
 // ── WebSocket ────────────────────────────────────────────
-const urlWS = `ws://${window.location.host}`;
+const urlWS = `ws://${window.location.host}/ws`;
 let ws = null;
 let intervaloReconexion = null;
 

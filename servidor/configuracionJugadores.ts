@@ -28,9 +28,9 @@ export const CONFIGS_JUGADORES = [
 ] as const;
 
 
-export const MAX_JUGADORES = 1;  // máximo de jugadores simultáneos
+export const MAX_JUGADORES = 4;  // máximo de jugadores simultáneos
 
-export const MIN_JUGADORES_PARA_GANAR = 1;
+export const MIN_JUGADORES_PARA_GANAR = 2;
 
 export function crearEstadoInicial(): EstadoJuego {
   return {
