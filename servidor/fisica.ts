@@ -5,109 +5,96 @@ const { Engine, Bodies, Body, Composite } = Matter;
 
 export function crearMotorFisico() {
   const motor = Engine.create({
-    gravity: { x: 0, y: 2 },  
+    gravity: { x: 0, y: 2 },
   });
   const mundo = motor.world;
   return { motor, mundo };
 }
 
 export function crearCuerpoJugador(x: number, y: number, etiqueta: string) {
-  const W = 36;
-  const H = 54;
-
-  const cuerpoPrincipal = Bodies.rectangle(x, y, W, H, {
-      friction: 0,          // ← CAMBIADO de 0.01 a 0
-      frictionStatic: 0,    // ← AGREGADO
-      frictionAir: 0.02,
-      restitution: 0,
-      inertia: Infinity, 
-    });
-
-  // 2. Sensor de pies: un micro-rectángulo debajo del cuerpo principal
-  // Es más angosto (W - 6) para que pegarse a una pared no active el sensor
-  const sensorPies = Bodies.rectangle(x, y + H / 2, W - 6, 4, {
-    isSensor: true, // No empuja cosas, actúa como disparador de lógica
-    label: `sensor-pies-${etiqueta}`
+  // Cuerpo simple — sin sensor compuesto.
+  // El cuerpo compuesto causaba que Matter.Query.collides detectara colisiones
+  // entre las partes del mismo cuerpo y con jugadores adyacentes, generando
+  // falsos positivos en estaEnSuelo que disparaban saltos fantasma.
+  return Bodies.rectangle(x, y, 36, 54, {
+    label:         `jugador-${etiqueta}`,
+    friction:      0,
+    frictionStatic: 0,
+    frictionAir:   0.02,
+    restitution:   0,
+    inertia:       Infinity,
   });
-
-  // 3. Crear un cuerpo compuesto uniendo ambos componentes
-  const cuerpoCompuesto = Body.create({
-    parts: [cuerpoPrincipal, sensorPies],
-    label: `jugador-${etiqueta}`,
-    friction: 0.01,
-    frictionAir: 0.02,
-    restitution: 0,
-    inertia: Infinity,
-  });
-
-  return cuerpoCompuesto;
 }
 
-// 1. Modificamos las cajas para quitarles CUALQUIER tipo de elasticidad/rebote
 export function crearCuerposCajas(cajas: Caja[]): Matter.Body[] {
   return cajas.map((caja, indice) =>
     Bodies.rectangle(caja.x, caja.y, caja.ancho, caja.alto, {
       label:       `caja-${indice}`,
-      friction:    0.8,   
+      friction:    0.8,
       frictionAir: 0.05,
-      restitution: 0,      // ← CAMBIADO de 0.1 a 0 (Cero rebote elástico)
-      mass:        5,     
-      inertia:     Infinity, // no rota al ser empujada
+      restitution: 0,
+      mass:        5,
+      inertia:     Infinity,
     })
   );
 }
 
-// 2. Optimizamos el movimiento para que no "machaque" ni fuerce la física al chocar techos
 export function aplicarMovimiento(
   cuerpo:  Matter.Body,
   botones: Set<string>,
   enSuelo: boolean,
 ) {
-  const quiereIzquierda = botones.has('izquierda');
-  const quiereDerecha   = botones.has('derecha');
-  const quiereSaltar    = botones.has('salto');
-
   let velocidadX = 0;
-  if (quiereIzquierda) velocidadX = -7;
-  if (quiereDerecha)   velocidadX =  7;
+  if (botones.has('izquierda')) velocidadX = -7;
+  if (botones.has('derecha'))   velocidadX =  7;
 
-  // Si quiere saltar y el sensor detectó suelo, aplicamos el impulso vertical directo
-  if (quiereSaltar && enSuelo) {
+  // Modificamos el margen vertical para evitar el salto infinito por tirones físicos
+  const yaVaRapidoArriba = cuerpo.velocity.y < -0.5; 
+  
+  if (botones.has('salto') && enSuelo && !yaVaRapidoArriba) {
+    // Aplicamos el salto de forma limpia
     Body.setVelocity(cuerpo, { x: velocidadX, y: -15 });
     return;
   }
 
-  // SI EL JUGADOR ESTÁ SUBIENDO (Y < 0) Y PEGA CONTRA UN TECHO:
-  // Si Matter.js detecta que la velocidad real disminuyó drásticamente por un choque superior,
-  // evitamos forzar la inercia para que no tiemble ni rebote con las cajas.
-  let velocidadYActual = cuerpo.velocity.y;
-  
-  // Pequeño truco de suavizado: si hay una fuerza externa empujándolo hacia abajo repentinamente (un techo)
-  // dejamos que la física actúe de forma natural.
-  Body.setVelocity(cuerpo, { x: velocidadX, y: velocidadYActual });
+  Body.setVelocity(cuerpo, { x: velocidadX, y: cuerpo.velocity.y });
 }
 
 export function estaEnSuelo(cuerpo: Matter.Body, mundo: Matter.World): boolean {
   const todosCuerpos = Composite.allBodies(mundo);
 
-  // Buscamos la parte del cuerpo compuesto que corresponde al sensor de pies
-  const miSensor = cuerpo.parts.find(part => part.label?.startsWith('sensor-pies-'));
-  if (!miSensor) return false;
+  // Pie del jugador: borde inferior del bounding box
+  const pieY = cuerpo.bounds.max.y;
+  // Usamos un margen horizontal interno para ignorar roces laterales
+  const izqX = cuerpo.bounds.min.x + 4;
+  const derX = cuerpo.bounds.max.x - 4;
 
-  // Verificamos de forma nativa qué cuerpos están chocando/superpuestos con el sensor
-  const colisiones = Matter.Query.collides(miSensor, todosCuerpos);
+  for (const otro of todosCuerpos) {
+    // Descartar el cuerpo propio
+    if (otro === cuerpo) continue;
+    if (cuerpo.parts && cuerpo.parts.includes(otro)) continue;
 
-  for (const colision of colisiones) {
-    // Descartamos colisiones con el propio jugador o sus subpartes
-    if (colision.bodyA === cuerpo || colision.bodyB === cuerpo) continue;
+    const esSuelo   = otro.isStatic;
+    const esCaja    = otro.label?.startsWith('caja-');
+    const esJugador = otro.label?.startsWith('jugador-');
 
-    const otroCuerpo = colision.bodyA === miSensor ? colision.bodyB : colision.bodyA;
+    // ¡REPARADO! Ahora permitimos plataformas estáticas, cajas Y otros jugadores
+    if (!esSuelo && !esCaja && !esJugador) continue;
 
-    // Si toca una plataforma estática o una caja, el piso es válido
-    const esSuelo = otroCuerpo.isStatic;
-    const esCaja = otroCuerpo.label?.startsWith('caja-');
+    const techoOtro = otro.bounds.min.y;
+    const izqOtro   = otro.bounds.min.x;
+    const derOtro   = otro.bounds.max.x;
 
-    if (esSuelo || esCaja) {
+    // Ventana vertical de ±10px (un poco más ajustada para evitar saltos fantasmas en colisiones rápidas)
+    const tocaVertical   = pieY >= techoOtro - 10 && pieY <= techoOtro + 10;
+    const tocaHorizontal = derX > izqOtro && izqX < derOtro;
+
+    // Si está físicamente apoyado sobre el "techo" del otro objeto/jugador...
+    if (tocaVertical && tocaHorizontal) {
+      // Evitamos falsos positivos si el cuerpo de abajo se está moviendo hacia arriba demasiado rápido
+      if (otro.velocity.y < -2) {
+        continue; 
+      }
       return true;
     }
   }
