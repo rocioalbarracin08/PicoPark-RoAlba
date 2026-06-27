@@ -20,15 +20,15 @@ import {
 
 import type { Jugador } from './configuracionJugadores';
 
-// ── Tipos exportados para que conexionRed.ts pueda usarlos ──────────────────
+//Tipos exportados para que conexionRed.ts pueda usarlos 
 export type EnviarATodosFn = (mensaje: object) => void;
 
-// ── Estado global de la simulación ──────────────────────────────────────────
+//Estado global de la simulación 
 const estado           = crearEstadoInicial();
 const { motor, mundo } = crearMotorFisico();
 const nivelConfig      = NIVELES[estado.nivelActual - 1];
 
-export const slotsLibres: number[] = [0, 1, 2, 3];
+export const slotsLibres: number[] = Array.from({ length: MAX_JUGADORES }, (_, i) => i);
 
 const botonesPorIdWS = new Map<string, Set<string>>();
 
@@ -73,6 +73,8 @@ function construirSnapshot() {
     tipo:          'estado',
     fase:          estado.fase,
     nivelActual:   estado.nivelActual,
+    minJugadores:  MIN_JUGADORES_PARA_GANAR,
+    maxJugadores:  MAX_JUGADORES, 
     llaveEnJuego:  estado.llaveEnJuego,
     llaveRecogida: estado.llaveRecogida,
     llaveX: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.x : null,

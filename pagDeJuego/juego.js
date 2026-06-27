@@ -105,7 +105,7 @@ function conectarWS() {
 
     if (msg.tipo === 'estado') {
       estadoActual = msg;
-      elContador.textContent = `Jugadores: ${msg.jugadores.length}/4`;
+      elContador.textContent = `Jugadores: ${msg.jugadores.length}/${msg.maxJugadores}`;
     }
   };
 }
@@ -297,8 +297,8 @@ function dibujar() {
   }
 
   // Aviso de cuántos jugadores faltan para la llave
-  if (estadoActual.jugadores.length < 3) {
-    const faltan = 3 - estadoActual.jugadores.length;
+  if (estadoActual.jugadores.length < estadoActual.minJugadores) {
+    const faltan = estadoActual.minJugadores - estadoActual.jugadores.length;
     ctx.fillStyle    = 'rgba(245,197,66,0.9)';
     ctx.font         = `bold ${Math.max(11, 13 * Math.min(eX, eY))}px monospace`;
     ctx.textAlign    = 'center';
