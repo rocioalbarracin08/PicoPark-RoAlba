@@ -38,7 +38,7 @@ export function PantallaConexion({ onConectado }: Props) {
       return;
     }
 
-    const urlWS = `ws://${host}`;
+    const urlWS = `ws://${host}/ws`;
     setConectando(true);
     conexionManejada.current = false;
 
