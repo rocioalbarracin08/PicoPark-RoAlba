@@ -18,10 +18,8 @@ export function PantallaConexion({ onConectado }: Props) {
   const [modoQR, setModoQR]             = useState(false);
   const [permisoCam, pedirPermisoCam]   = useCameraPermissions();
 
-  // Evita manejar la conexión dos veces si hay eventos simultáneos
   const conexionManejada = useRef(false);
 
-  //Limpiar la IP ingresada 
   function limpiarIP(texto: string): string {
     return texto
       .trim()
@@ -29,7 +27,7 @@ export function PantallaConexion({ onConectado }: Props) {
       .split('/')[0];              
   }
 
-  //Conectar al servidor 
+  //Conexión con el servidor 
   function conectar(ipTexto: string) {
     const host = limpiarIP(ipTexto);
 
@@ -92,7 +90,7 @@ export function PantallaConexion({ onConectado }: Props) {
         clearTimeout(timerTimeout);
         ws.close();
         setConectando(false);
-        Alert.alert('Partida llena', 'Ya hay 4 jugadores. Esperá a que haya lugar.');
+        Alert.alert('Partida llena', 'Esperá a que haya lugar.');
       }
     };
 
@@ -109,7 +107,6 @@ export function PantallaConexion({ onConectado }: Props) {
     };
   }
 
-  //Abrir cámara para QR
   async function abrirCamaraQR() {
     if (!permisoCam?.granted) {
       const resultado = await pedirPermisoCam();

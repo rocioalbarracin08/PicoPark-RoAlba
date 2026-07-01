@@ -11,7 +11,6 @@ import {
   hayLugar,
 } from './simulacionFisica';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 const PUERTO = 3000;
 
 function obtenerIPLocal(): string {
@@ -31,7 +30,6 @@ const ARCHIVOS: Record<string, { archivo: string; mime: string }> = {
   '/estilos.css': { archivo: 'estilos.css', mime: 'text/css'                 },
 };
 
-// ── Clientes conectados ───────────────────────────────────────────────────────
 // Usamos un Map para poder enviar mensajes a todos desde simulacionFisica
 const clientes = new Map<string, { send: (msg: string) => void }>();
 
@@ -40,13 +38,12 @@ function enviarATodos(mensaje: object) {
   for (const cliente of clientes.values()) cliente.send(texto);
 }
 
-// ── App ───────────────────────────────────────────────────────────────────────
 const ipLocal  = obtenerIPLocal();
 const urlJuego = `http://${ipLocal}:${PUERTO}`;
 
 const app = new Elysia()
 
-  // Servir archivos estáticos de pagDeJuego
+  // Pag del juego
   .get('*', ({ request }) => {
     const url    = new URL(request.url).pathname;
     const entry  = ARCHIVOS[url];
@@ -73,14 +70,12 @@ const app = new Elysia()
         return;
       }
 
-      // ── Pantalla del juego ──
       if (mensaje.tipo === 'pantalla') {
         console.log('🖥️  Pantalla conectada');
         ws.send(JSON.stringify({ tipo: 'info-servidor', urlJuego }));
         return;
       }
 
-      // ── Gamepad: primera conexión ──
       if (mensaje.tipo === 'gamepad') {
         if (!hayLugar()) {
           ws.send(JSON.stringify({ tipo: 'partida-llena' }));
@@ -100,7 +95,6 @@ const app = new Elysia()
         return;
       }
 
-      // ── Input de botones ──
       if (mensaje.tipo === 'input') {
         registrarInput(ws.id, mensaje.direccion, mensaje.estado);
       }
@@ -114,7 +108,6 @@ const app = new Elysia()
 
   .listen(PUERTO);
 
-// ── Arrancar simulación ───────────────────────────────────────────────────────
 iniciarSimulacion(enviarATodos);
 
 console.log('');

@@ -11,7 +11,6 @@ import { SafeAreaView }       from 'react-native-safe-area-context';
 
 import type { InfoJugador } from '../App';
 
-// Tamaños de los botones
 const TAMANIO_BTN      = 72;
 const TAMANIO_BTN_SALTO = 110;
 
@@ -25,12 +24,11 @@ interface Props {
 
 export function PantallaGamepad({ ws, infoJugador, onDesconectar }: Props) {
 
-  useKeepAwake(); // Evita que la pantalla se apague mientras se juega
+  useKeepAwake(); //Evita que la pantalla se apague
 
   const [conectado, setConectado] = useState(ws.readyState === WebSocket.OPEN);
   const [fase, setFase]           = useState('jugando');
 
-  // Registro de botones actualmente presionados (para no enviar duplicados)
   const botonesPresionados = useRef<Set<Direccion>>(new Set());
 
   //orientación horizontal 
@@ -127,7 +125,6 @@ export function PantallaGamepad({ ws, infoJugador, onDesconectar }: Props) {
           <Text style={[estilos.textoFase, { color: '#00ff88' }]}>🎉 ¡Completado!</Text>
         )}
 
-        {/* Botón salir */}
         <TouchableOpacity style={estilos.botonSalir} onPress={onDesconectar}>
           <Text style={estilos.botonSalirTexto}>Salir</Text>
         </TouchableOpacity>
@@ -138,7 +135,6 @@ export function PantallaGamepad({ ws, infoJugador, onDesconectar }: Props) {
 
         <View style={estilos.dpad}>
 
-          {/* Fila de arriba: botón ▲ */}
           <View style={estilos.filaDpad}>
             <View style={{ width: TAMANIO_BTN }} />
             <TouchableOpacity

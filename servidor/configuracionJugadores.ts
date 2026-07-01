@@ -9,6 +9,7 @@ export interface Jugador {
   cuerpoFisico:  Matter.Body;
   cargandoLlave: boolean;  
   slotIndex:     number;  
+  yaEntro:       boolean;
 }
 
 export interface EstadoJuego {
@@ -17,6 +18,7 @@ export interface EstadoJuego {
   jugadores:     Map<string, Jugador>;
   llaveRecogida: boolean; 
   llaveEnJuego:  boolean;  
+  puertaAbierta: boolean;
 }
 
 
@@ -28,9 +30,9 @@ export const CONFIGS_JUGADORES = [
 ] as const;
 
 
-export const MAX_JUGADORES = 2;  // máximo de jugadores simultáneos
+export const MAX_JUGADORES = 4;
 
-export const MIN_JUGADORES_PARA_GANAR = 1;
+export const MIN_JUGADORES_PARA_GANAR = 2;
 
 export function crearEstadoInicial(): EstadoJuego {
   return {
@@ -39,5 +41,6 @@ export function crearEstadoInicial(): EstadoJuego {
     jugadores:     new Map(),
     llaveRecogida: false,
     llaveEnJuego:  false,
+    puertaAbierta: false,
   };
 }

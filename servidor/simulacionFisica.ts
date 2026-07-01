@@ -6,6 +6,7 @@ import {
   crearCuerposCajas,
   aplicarMovimiento,
   estaEnSuelo,
+  actualizarBloqueoSalto,
   avanzarMotor,
 } from './fisica';
 
@@ -20,42 +21,93 @@ import {
 
 import type { Jugador } from './configuracionJugadores';
 
-//Tipos exportados para que conexionRed.ts pueda usarlos 
 export type EnviarATodosFn = (mensaje: object) => void;
 
-//Estado global de la simulación 
-const estado           = crearEstadoInicial();
-const { motor, mundo } = crearMotorFisico();
-const nivelConfig      = NIVELES[estado.nivelActual - 1];
+let estado      = crearEstadoInicial();
+let nivelIdx    = 0;
+let nivelConfig = NIVELES[nivelIdx];
+let { motor, mundo } = crearMotorFisico();
 
 export const slotsLibres: number[] = Array.from({ length: MAX_JUGADORES }, (_, i) => i);
 
 const botonesPorIdWS = new Map<string, Set<string>>();
+const arribaAnteriorPorIdWS = new Map<string, boolean>();
 
-// ── Física del nivel: plataformas, cajas, llave ─────────────────────────────
-for (const plataforma of nivelConfig.plataformas) {
-  Matter.World.add(
-    mundo,
-    Matter.Bodies.rectangle(
-      plataforma.x, plataforma.y,
-      plataforma.ancho, plataforma.alto,
-      { isStatic: true, label: plataforma.etiqueta ?? 'plataforma' }
-    )
+const saltoBloqueadoPorIdWS = new Map<string, boolean>();
+
+interface ProgresoSlot {
+  cargandoLlave: boolean;
+  yaEntro:       boolean;
+}
+const progresoPorSlot = new Map<number, ProgresoSlot>();
+
+let cuerposCajas: Matter.Body[] = [];
+let cuerpoLlave: Matter.Body | null = null;
+
+function construirNivel() {
+  for (const plataforma of nivelConfig.plataformas) {
+    Matter.World.add(
+      mundo,
+      Matter.Bodies.rectangle(
+        plataforma.x, plataforma.y,
+        plataforma.ancho, plataforma.alto,
+        { isStatic: true, label: plataforma.etiqueta ?? 'plataforma' }
+      )
+    );
+  }
+
+  cuerposCajas = crearCuerposCajas(nivelConfig.cajas);
+  for (const caja of cuerposCajas) Matter.World.add(mundo, caja);
+
+  cuerpoLlave = Matter.Bodies.circle(
+    nivelConfig.posicionLlave.x,
+    nivelConfig.posicionLlave.y,
+    18,
+    { isStatic: true, isSensor: true, label: 'llave' }
   );
+  Matter.World.add(mundo, cuerpoLlave);
+}
+construirNivel();
+
+function cargarSiguienteNivel(enviarATodos: EnviarATodosFn) {
+  nivelIdx    = (nivelIdx + 1) % NIVELES.length;
+  nivelConfig = NIVELES[nivelIdx];
+
+  Matter.World.clear(mundo, false);
+  Matter.Engine.clear(motor);
+  const nuevo = crearMotorFisico();
+  motor = nuevo.motor;
+  mundo = nuevo.mundo;
+
+  construirNivel();
+
+  let i = 0;
+  for (const jugador of estado.jugadores.values()) {
+    const spawn = nivelConfig.posicionesIniciales[i % nivelConfig.posicionesIniciales.length];
+
+    jugador.cuerpoFisico.isSensor = false;
+
+    Matter.World.add(mundo, jugador.cuerpoFisico);
+    Matter.Body.setPosition(jugador.cuerpoFisico, { x: spawn.x, y: spawn.y });
+    Matter.Body.setVelocity(jugador.cuerpoFisico, { x: 0, y: 0 });
+    jugador.cargandoLlave = false;
+    jugador.yaEntro       = false;
+    saltoBloqueadoPorIdWS.set(jugador.id, false);
+    i++;
+  }
+
+  progresoPorSlot.clear();
+
+  estado.fase          = 'jugando';
+  estado.llaveRecogida = false;
+  estado.llaveEnJuego  = estado.jugadores.size >= MIN_JUGADORES_PARA_GANAR;
+  estado.puertaAbierta = false;
+  estado.nivelActual   = nivelConfig.numero;
+
+  enviarATodos({ tipo: 'nivel-nuevo', nivel: nivelConfig.numero, nombre: nivelConfig.nombre });
+  console.log(`➡️  Nivel ${nivelConfig.numero}: ${nivelConfig.nombre}`);
 }
 
-const cuerposCajas = crearCuerposCajas(nivelConfig.cajas);
-for (const caja of cuerposCajas) Matter.World.add(mundo, caja);
-
-let cuerpoLlave: Matter.Body | null = Matter.Bodies.circle(
-  nivelConfig.posicionLlave.x,
-  nivelConfig.posicionLlave.y,
-  18,
-  { isStatic: true, isSensor: true, label: 'llave' }
-);
-Matter.World.add(mundo, cuerpoLlave);
-
-// ── Helpers internos ─────────────────────────────────────────────────────────
 function reaparecerLlave(enviarATodos: EnviarATodosFn) {
   if (!cuerpoLlave) return;
   Matter.Body.setPosition(cuerpoLlave, {
@@ -74,9 +126,10 @@ function construirSnapshot() {
     fase:          estado.fase,
     nivelActual:   estado.nivelActual,
     minJugadores:  MIN_JUGADORES_PARA_GANAR,
-    maxJugadores:  MAX_JUGADORES, 
+    maxJugadores:  MAX_JUGADORES,
     llaveEnJuego:  estado.llaveEnJuego,
     llaveRecogida: estado.llaveRecogida,
+    puertaAbierta: estado.puertaAbierta,
     llaveX: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.x : null,
     llaveY: estado.llaveEnJuego && cuerpoLlave ? cuerpoLlave.position.y : null,
     jugadores: [...estado.jugadores.values()].map((j: Jugador) => ({
@@ -86,6 +139,7 @@ function construirSnapshot() {
       x:             j.cuerpoFisico.position.x,
       y:             j.cuerpoFisico.position.y,
       cargandoLlave: j.cargandoLlave,
+      yaEntro:       j.yaEntro,
     })),
     cajas: cuerposCajas.map(caja => ({
       x:     caja.position.x,
@@ -96,7 +150,6 @@ function construirSnapshot() {
   };
 }
 
-// ── API pública: lo que conexionRed.ts llama ─────────────────────────────────
 
 export function registrarJugador(idWS: string): { nombre: string; color: string; slotIndex: number } | null {
   if (slotsLibres.length === 0) return null;
@@ -108,18 +161,29 @@ export function registrarJugador(idWS: string): { nombre: string; color: string;
 
   Matter.World.add(mundo, cuerpo);
 
+  const progresoPrevio = progresoPorSlot.get(slotIndex);
+  const cargandoLlave  = progresoPrevio?.cargandoLlave ?? false;
+  const yaEntro         = progresoPrevio?.yaEntro ?? false;
+
+  cuerpo.isSensor = yaEntro;
+
   const jugador: Jugador = {
     id:            idWS,
     nombre:        configSlot.nombre,
     color:         configSlot.color,
     cuerpoFisico:  cuerpo,
-    cargandoLlave: false,
+    cargandoLlave,
     slotIndex,
+    yaEntro,
   };
 
   estado.jugadores.set(idWS, jugador);
   botonesPorIdWS.set(idWS, new Set());
+  arribaAnteriorPorIdWS.set(idWS, false);
+  saltoBloqueadoPorIdWS.set(idWS, false);
   estado.fase = 'jugando';
+
+  progresoPorSlot.delete(slotIndex); 
 
   return { nombre: configSlot.nombre, color: configSlot.color, slotIndex };
 }
@@ -130,11 +194,18 @@ export function desregistrarJugador(idWS: string, enviarATodos: EnviarATodosFn) 
 
   console.log(`❌ ${jugador.nombre} desconectado`);
 
-  if (jugador.cargandoLlave) reaparecerLlave(enviarATodos);
+  if (jugador.cargandoLlave && !jugador.yaEntro) reaparecerLlave(enviarATodos);
+
+  progresoPorSlot.set(jugador.slotIndex, {
+    cargandoLlave: jugador.cargandoLlave,
+    yaEntro:       jugador.yaEntro,
+  });
 
   Matter.World.remove(mundo, jugador.cuerpoFisico);
   estado.jugadores.delete(idWS);
   botonesPorIdWS.delete(idWS);
+  arribaAnteriorPorIdWS.delete(idWS);
+  saltoBloqueadoPorIdWS.delete(idWS);
 
   slotsLibres.push(jugador.slotIndex);
   slotsLibres.sort((a, b) => a - b);
@@ -155,7 +226,6 @@ export function hayLugar(): boolean {
   return slotsLibres.length > 0;
 }
 
-// ── Tick loop a 60fps ────────────────────────────────────────────────────────
 const MS_POR_TICK = 1000 / 60;
 let momentoUltimoTick = Date.now();
 
@@ -166,13 +236,20 @@ export function iniciarSimulacion(enviarATodos: EnviarATodosFn) {
     momentoUltimoTick = ahora;
 
     for (const [idWS, jugador] of estado.jugadores.entries()) {
+      if (jugador.yaEntro) continue;
+
       const botones = botonesPorIdWS.get(idWS) ?? new Set();
-      aplicarMovimiento(jugador.cuerpoFisico, botones, estaEnSuelo(jugador.cuerpoFisico, mundo));
+      const enSuelo = estaEnSuelo(jugador.cuerpoFisico, mundo);
+
+      const bloqueadoAntes = saltoBloqueadoPorIdWS.get(idWS) ?? false;
+      const bloqueadoAhora = actualizarBloqueoSalto(jugador.cuerpoFisico, mundo, bloqueadoAntes);
+      saltoBloqueadoPorIdWS.set(idWS, bloqueadoAhora);
+
+      aplicarMovimiento(jugador.cuerpoFisico, botones, enSuelo, bloqueadoAhora);
     }
 
     avanzarMotor(motor, deltaMs);
 
-    // Llave: aparece solo con suficientes jugadores
     const cantJugadores = estado.jugadores.size;
     if (cantJugadores < MIN_JUGADORES_PARA_GANAR) {
       estado.llaveEnJuego = false;
@@ -180,9 +257,9 @@ export function iniciarSimulacion(enviarATodos: EnviarATodosFn) {
       estado.llaveEnJuego = true;
     }
 
-    // Detectar si alguien toca la llave
     if (estado.llaveEnJuego && !estado.llaveRecogida && cuerpoLlave) {
       for (const jugador of estado.jugadores.values()) {
+        if (jugador.yaEntro) continue;
         const dx = Math.abs(jugador.cuerpoFisico.position.x - cuerpoLlave.position.x);
         const dy = Math.abs(jugador.cuerpoFisico.position.y - cuerpoLlave.position.y);
         if (dx < 40 && dy < 50) {
@@ -196,8 +273,8 @@ export function iniciarSimulacion(enviarATodos: EnviarATodosFn) {
       }
     }
 
-    // Respawn si cae al vacío
     for (const jugador of estado.jugadores.values()) {
+      if (jugador.yaEntro) continue;
       if (jugador.cuerpoFisico.position.y <= nivelConfig.altoMundo + 100) continue;
       if (jugador.cargandoLlave) reaparecerLlave(enviarATodos);
       const spawn = nivelConfig.posicionesIniciales[jugador.slotIndex];
@@ -206,21 +283,52 @@ export function iniciarSimulacion(enviarATodos: EnviarATodosFn) {
       Matter.Body.setAngularVelocity(jugador.cuerpoFisico, 0);
     }
 
-    // Detectar nivel completado
     if (estado.fase === 'jugando') {
       const puerta = nivelConfig.posicionPuerta;
-      const entrando = [...estado.jugadores.entries()].filter(([idWS, jugador]) => {
-        const botones       = botonesPorIdWS.get(idWS);
-        const presionaArriba = botones?.has('arriba') ?? false;
+
+      for (const [idWS, jugador] of estado.jugadores.entries()) {
+        if (jugador.yaEntro) continue; // ya no procesa nada, está fuera de juego
+
+        const botones        = botonesPorIdWS.get(idWS);
+        const arribaAhora     = botones?.has('arriba') ?? false;
+        const arribaAntes     = arribaAnteriorPorIdWS.get(idWS) ?? false;
+        const clickArriba     = arribaAhora && !arribaAntes;
+        arribaAnteriorPorIdWS.set(idWS, arribaAhora);
+
+        if (!clickArriba) continue;
+
         const dx = Math.abs(jugador.cuerpoFisico.position.x - puerta.x);
         const dy = Math.abs(jugador.cuerpoFisico.position.y - puerta.y);
-        return presionaArriba && dx < 60 && dy < 80;
-      }).map(([, j]) => j);
+        const cercaDePuerta = dx < 60 && dy < 80;
+        if (!cercaDePuerta) continue;
 
-      if (entrando.some(j => j.cargandoLlave) && entrando.length >= MIN_JUGADORES_PARA_GANAR) {
+        if (!estado.puertaAbierta) {
+          if (jugador.cargandoLlave) {
+            estado.puertaAbierta = true;
+            enviarATodos({ tipo: 'puerta-abierta', nombre: jugador.nombre });
+            console.log(`🔓 ${jugador.nombre} abrió la puerta`);
+          }
+          continue;
+        }
+
+        jugador.yaEntro = true;
+        jugador.cuerpoFisico.isSensor = true;
+        Matter.Body.setVelocity(jugador.cuerpoFisico, { x: 0, y: 0 });
+
+        enviarATodos({ tipo: 'jugador-entro', nombre: jugador.nombre });
+        console.log(`🚪 ${jugador.nombre} entró por la puerta`);
+      }
+
+      const todosEntraron =
+        estado.jugadores.size > 0 &&
+        [...estado.jugadores.values()].every(j => j.yaEntro);
+
+      if (todosEntraron) {
         estado.fase = 'nivel-completado';
         enviarATodos({ tipo: 'nivel-completado', nivel: estado.nivelActual });
         console.log(`🏆 Nivel ${estado.nivelActual} completado!`);
+
+        setTimeout(() => cargarSiguienteNivel(enviarATodos), 3000);
       }
     }
 

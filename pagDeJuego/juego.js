@@ -12,44 +12,46 @@ function ajustarCanvas() {
 window.addEventListener('resize', ajustarCanvas);
 ajustarCanvas();
 
-// REEMPLAZÁ el objeto NIVELES_DATOS completo en juego.js por este bloque:
-
 const NIVELES_DATOS = {
   1: {
     anchoMundo: 1200,
     altoMundo:  580,
     plataformas: [
-      { x: 150,  y: 560, ancho: 280, alto: 20 },  // suelo-izq
-      { x: 490,  y: 430, ancho: 160, alto: 20 },  // plat-media
-      { x: 965,  y: 560, ancho: 430, alto: 20 },  // suelo-der ← extendido, cubre x=750..1180
-      { x: 850,  y: 380, ancho: 160, alto: 20 },  // plat-alta ← bajada a y=380
-      { x: 10,   y: 290, ancho: 20,  alto: 580 }, // pared-izq
-      { x: 1190, y: 290, ancho: 20,  alto: 580 }, // pared-der
+      { x: 150,  y: 560, ancho: 280, alto: 20 },  
+      { x: 490,  y: 430, ancho: 160, alto: 20 },  
+      { x: 965,  y: 560, ancho: 430, alto: 20 },  
+      { x: 850,  y: 380, ancho: 160, alto: 20 },  
+      { x: 10,   y: 290, ancho: 20,  alto: 580 }, 
+      { x: 1190, y: 290, ancho: 20,  alto: 580 }, 
     ],
     cajas: [
       { x: 200, y: 515, ancho: 44, alto: 44 },
       { x: 950, y: 515, ancho: 44, alto: 44 },
     ],
-    posicionPuerta: { x: 1100, y: 550 },  // ← y=550, apoya sobre suelo-der
-    posicionLlave:  { x: 850,  y: 340 },  // ← encima de plat-alta (y=380)
+    posicionPuerta: { x: 1100, y: 550 },  
+    posicionLlave:  { x: 850,  y: 340 },  
   },
   2: {
-    anchoMundo: 800,
-    altoMundo:  650,
+    anchoMundo: 1200,
+    altoMundo: 580,
+
     plataformas: [
-      { x: 150,  y: 630, ancho: 280, alto: 20 },
-      { x: 640,  y: 630, ancho: 280, alto: 20 },
-      { x: 200,  y: 320, ancho: 160, alto: 20 },
-      { x: 630,  y: 460, ancho: 200, alto: 20 },
-      { x: 10,   y: 325, ancho: 20,  alto: 650 },
-      { x: 790,  y: 325, ancho: 20,  alto: 650 },
+      { x: 600, y: 560, ancho: 1180, alto: 20 },
+
+      { x: 250, y: 320, ancho: 160, alto: 20 },
+      { x: 750, y: 460, ancho: 200, alto: 20 },
+
+      { x: 10,   y: 290, ancho: 20, alto: 580 },
+      { x: 1190, y: 290, ancho: 20, alto: 580 },
     ],
+
     cajas: [
-      { x: 180, y: 585, ancho: 44, alto: 44 },
-      { x: 230, y: 585, ancho: 44, alto: 44 },
+      { x: 180, y: 515, ancho: 44, alto: 44 },
+      { x: 230, y: 515, ancho: 44, alto: 44 },
     ],
-    posicionPuerta: { x: 710, y: 400 },
-    posicionLlave:  { x: 200, y: 280 },
+
+    posicionPuerta: { x: 1040, y: 550 },
+    posicionLlave: { x: 250, y: 280 },
   },
 };
 
@@ -110,17 +112,15 @@ function conectarWS() {
   };
 }
 
-// ── Colores ──────────────────────────────────────────────
-const COLOR_FONDO      = '#2b2d42';  // gris oscuro — fondo del mapa
-const COLOR_VACIO      = '#111318';  // negro — el vacío donde se cae
-const COLOR_PLATAFORMA = '#e0e0e0';  // gris claro — plataformas
-const COLOR_CAJA       = '#c0763a';  // marrón — cajas de madera
-const COLOR_PUERTA_C   = '#555566';  // gris — puerta cerrada
-const COLOR_PUERTA_A   = '#2ecc71';  // verde — puerta abierta
-const COLOR_LLAVE      = '#f5c542';  // amarillo — llave
+const COLOR_FONDO      = '#2b2d42';  
+const COLOR_VACIO      = '#111318';  
+const COLOR_PLATAFORMA = '#e0e0e0';  
+const COLOR_CAJA       = '#c0763a';  
+const COLOR_PUERTA_C   = '#555566';  
+const COLOR_PUERTA_A   = '#2ecc71';  
+const COLOR_LLAVE      = '#f5c542';  
 
-// ── Funciones de dibujo ──────────────────────────────────
-
+// Funciones de dibujo
 function dibujarPlataforma(p, eX, eY) {
   const x = (p.x - p.ancho / 2) * eX;
   const y = (p.y - p.alto  / 2) * eY;
@@ -206,7 +206,8 @@ function dibujarJugador(j, eX, eY) {
   const w  = W * eX;
   const h  = H * eY;
 
-  // Cuerpo
+  ctx.globalAlpha = j.yaEntro ? 0.25 : 1;
+
   ctx.fillStyle = j.color;
   ctx.beginPath();
   ctx.roundRect(jx - w/2, jy - h/2, w, h, 5);
@@ -216,7 +217,6 @@ function dibujarJugador(j, eX, eY) {
   ctx.lineWidth   = 1.5;
   ctx.stroke();
 
-  // Número encima
   const num = j.nombre.replace('Jugador ', '');
   ctx.fillStyle    = '#fff';
   ctx.font         = `bold ${Math.max(8, 10 * Math.min(eX, eY))}px monospace`;
@@ -225,15 +225,16 @@ function dibujarJugador(j, eX, eY) {
   ctx.fillText(num, jx, jy - h/2 - 2);
   ctx.textBaseline = 'alphabetic';
 
-  // Indica si lleva la llave
   if (j.cargandoLlave) {
-    ctx.fillStyle    = COLOR_LLAVE;
-    ctx.font         = `${Math.max(9, 11 * Math.min(eX, eY))}px monospace`;
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'bottom';
-    ctx.fillText('🗝', jx, jy - h/2 - 14);
-    ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle    = COLOR_LLAVE;
+  ctx.font         = `bold ${Math.max(9, 11 * Math.min(eX, eY))}px monospace`;
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('🗝', jx, jy - h/2 - 14);
+  ctx.textBaseline = 'alphabetic';
   }
+
+  ctx.globalAlpha = 1;
 }
 
 function dibujar() {
@@ -247,21 +248,16 @@ function dibujar() {
   const eX = canvas.width  / nivel.anchoMundo;
   const eY = canvas.height / nivel.altoMundo;
 
-  // Fondo oscuro (el "vacío" donde se cae)
   ctx.fillStyle = COLOR_VACIO;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   ctx.fillStyle = COLOR_FONDO;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // IMPORTANTE: el vacío se pinta encima del fondo
-  // Las zonas sin plataforma son negras (COLOR_VACIO)
-  // Lo logramos dibujando el vacío SOLO en la parte de abajo
   const yPisoMundo = nivel.altoMundo * eY;
   ctx.fillStyle = COLOR_VACIO;
   ctx.fillRect(0, yPisoMundo - 1, canvas.width, canvas.height - yPisoMundo + 1);
 
-  // Plataformas (se dibujan ANTES del texto para que el texto quede encima)
   for (const p of nivel.plataformas) {
     dibujarPlataforma(p, eX, eY);
   }
@@ -270,7 +266,7 @@ function dibujar() {
   ctx.font         = `bold ${Math.max(12, 15 * eX)}px monospace`;
   ctx.textAlign    = 'left';
   ctx.textBaseline = 'top';
-  ctx.fillText(`NIVEL ${numNivel}`, 34, 8);
+  ctx.fillText(`NIVEL ${numNivel}`, 48, 12);
   ctx.textBaseline = 'alphabetic';
 
   if (!estadoActual) return;
@@ -285,7 +281,7 @@ function dibujar() {
     nivel.posicionPuerta.x,
     nivel.posicionPuerta.y,
     eX, eY,
-    estadoActual.llaveRecogida
+    estadoActual.puertaAbierta,
   );
 
   if (estadoActual.llaveEnJuego && estadoActual.llaveX != null) {
@@ -296,22 +292,42 @@ function dibujar() {
     dibujarJugador(j, eX, eY);
   }
 
-  // Aviso de cuántos jugadores faltan para la llave
+  let mensaje = null;
+
   if (estadoActual.jugadores.length < estadoActual.minJugadores) {
     const faltan = estadoActual.minJugadores - estadoActual.jugadores.length;
-    ctx.fillStyle    = 'rgba(245,197,66,0.9)';
-    ctx.font         = `bold ${Math.max(11, 13 * Math.min(eX, eY))}px monospace`;
-    ctx.textAlign    = 'center';
+    mensaje =  faltan === 1
+        ? 'Falta 1 jugador para que aparezca la llave'
+        : `Faltan ${faltan} jugadores para que aparezca la llave`;
+  }
+  else if (estadoActual.puertaAbierta) {
+    const faltan = estadoActual.jugadores.filter(j => !j.yaEntro).length;
+    mensaje =  faltan === 1
+        ? 'Falta 1 jugador que entre por la puerta'
+        : `Faltan ${faltan} jugadores que entren por la puerta`;
+  }
+  else if (estadoActual.llaveRecogida) {
+    mensaje = 'Lleven la llave a la puerta';
+  }
+  else if (estadoActual.fase === 'nivel-completado') {
+    mensaje = '¡Nivel completado!';
+  }
+
+  if (mensaje) {
+    ctx.fillStyle = 'rgba(245,197,66,0.9)';
+    ctx.font = `bold ${Math.max(11, 13 * Math.min(eX, eY))}px monospace`;
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
+
     ctx.fillText(
-      `Faltan ${faltan} jugador${faltan > 1 ? 'es' : ''} para la llave`,
+      mensaje,
       canvas.width / 2,
       14
     );
+
     ctx.textBaseline = 'alphabetic';
   }
 }
 
-// ── Arrancar ─────────────────────────────────────────────
 conectarWS();
 dibujar();

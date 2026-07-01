@@ -23,10 +23,19 @@
         "backgroundColor": "#1a1a2e"
       },
       "package": "com.picopark.gamepad",
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "ios": {
       "supportsTablet": false
+    },
+    "extra": {
+      "eas": {
+        "projectId": "5eecdc4c-c2cb-4bb4-9c1a-4d32e8673e4d"
+      }
     }
   }
 }
