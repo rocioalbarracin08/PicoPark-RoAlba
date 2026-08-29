@@ -32,7 +32,7 @@ export const CONFIGS_JUGADORES = [
 
 export const MAX_JUGADORES = 4;
 
-export const MIN_JUGADORES_PARA_GANAR = 2;
+export const MIN_JUGADORES_PARA_GANAR = 3;
 
 export function crearEstadoInicial(): EstadoJuego {
   return {
