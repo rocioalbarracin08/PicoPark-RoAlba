@@ -1,13 +1,15 @@
-FROM node:20-slim
+FROM node:24-slim
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY servidor/package*.json ./servidor/
+RUN npm --prefix ./servidor install --omit=dev
 
-RUN npm install
+COPY servidor/ ./servidor/
+COPY pagDeJuego/ ./pagDeJuego/
 
-COPY . .
+WORKDIR /app/servidor
 
 EXPOSE 3000
 
-CMD ["npm", "run", "dev"]
+CMD ["node", "conexionRed.ts"]
