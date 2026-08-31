@@ -1,4 +1,5 @@
-import { Elysia }    from 'elysia';
+import { Elysia } from 'elysia';
+import { node }   from '@elysiajs/node';
 import { readFileSync } from 'fs';
 import { join }         from 'path';
 import os               from 'os';
@@ -9,7 +10,7 @@ import {
   desregistrarJugador,
   registrarInput,
   hayLugar,
-} from './simulacionFisica';
+} from './simulacionFisica.ts';  
 
 const PUERTO = 3000;
 
@@ -22,7 +23,7 @@ function obtenerIPLocal(): string {
   return '127.0.0.1';
 }
 
-const DIR_PAG_DE_JUEGO = `${import.meta.dir}/../pagDeJuego`;
+const DIR_PAG_DE_JUEGO = `${import.meta.dirname}/../pagDeJuego`;
 const ARCHIVOS: Record<string, { archivo: string; mime: string }> = {
   '/':            { archivo: 'index.html',  mime: 'text/html; charset=utf-8' },
   '/index.html':  { archivo: 'index.html',  mime: 'text/html; charset=utf-8' },
@@ -41,8 +42,7 @@ function enviarATodos(mensaje: object) {
 const ipLocal  = obtenerIPLocal();
 const urlJuego = `http://${ipLocal}:${PUERTO}`;
 
-const app = new Elysia()
-
+const app = new Elysia({ adapter: node() })
   // Pag del juego
   .get('*', ({ request }) => {
     const url    = new URL(request.url).pathname;

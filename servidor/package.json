@@ -1,19 +1,20 @@
 {
   "name": "picopark-servidor",
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
-    "dev": "bun --watch conexionRed.ts",
-    "start": "bun conexionRed.ts"
+    "dev": "node --watch conexionRed.ts",
+    "start": "node conexionRed.ts"
   },
   "dependencies": {
     "elysia": "^1.4.29",
+    "@elysiajs/node": "^1.4.5",
     "matter-js": "^0.20.0",
     "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.13",
     "@types/matter-js": "^0.20.2",
-    "@types/node": "^25.6.0",
+    "@types/node": "^24.0.0",
     "@types/ws": "^8.5.10"
   }
 }
