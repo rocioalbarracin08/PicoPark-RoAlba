@@ -1,9 +1,9 @@
 services:
   picopark-server:
     build:
-      context: ./servidor
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: servidor/Dockerfile
     container_name: picopark-server
     ports:
-      - "8080:3000" 
+      - "8080:3000"
     restart: unless-stopped
