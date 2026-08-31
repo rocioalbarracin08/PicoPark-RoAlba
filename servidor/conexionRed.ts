@@ -12,8 +12,6 @@ import {
   hayLugar,
 } from './simulacionFisica.ts';  
 
-const PUERTO = 3000;
-
 function obtenerIPLocal(): string {
   for (const ifaces of Object.values(os.networkInterfaces())) {
     for (const iface of ifaces ?? []) {
