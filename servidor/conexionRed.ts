@@ -39,8 +39,13 @@ function enviarATodos(mensaje: object) {
   for (const cliente of clientes.values()) cliente.send(texto);
 }
 
-const ipLocal  = obtenerIPLocal();
-const urlJuego = `http://${ipLocal}:${PUERTO}`;
+const PUERTO = Number(process.env.PUERTO) || 3000; // puerto interno, fijo en 3000 para todos
+
+// Puerto e IP que se muestran en el QR — pueden diferir del puerto interno
+const puertoPublico = process.env.PUERTO_PUBLICO || String(PUERTO);
+const hostPublico    = process.env.HOST_PUBLICO   || obtenerIPLocal();
+
+const urlJuego = `http://${hostPublico}:${puertoPublico}`;
 
 const app = new Elysia({ adapter: node() })
   // Pag del juego
