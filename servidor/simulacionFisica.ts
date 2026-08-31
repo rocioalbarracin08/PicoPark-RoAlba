@@ -8,18 +8,18 @@ import {
   estaEnSuelo,
   actualizarBloqueoSalto,
   avanzarMotor,
-} from './fisica';
+} from './fisica.ts';
 
-import { NIVELES } from './configuracionNiveles';
+import { NIVELES } from './configuracionNiveles.ts';
 
 import {
   crearEstadoInicial,
   CONFIGS_JUGADORES,
   MAX_JUGADORES,
   MIN_JUGADORES_PARA_GANAR,
-} from './configuracionJugadores';
+} from './configuracionJugadores.ts';
 
-import type { Jugador } from './configuracionJugadores';
+import type { Jugador } from './configuracionJugadores.ts';
 
 export type EnviarATodosFn = (mensaje: object) => void;
 
