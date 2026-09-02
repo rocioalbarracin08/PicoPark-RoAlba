@@ -10,7 +10,20 @@ import {
   desregistrarJugador,
   registrarInput,
   hayLugar,
-} from './simulacionFisica.ts';  
+} from './simulacionFisica.ts';
+
+// ── ID propio por conexión (no confiamos en ws.id del adapter) ──
+const idsPorConexion = new WeakMap<object, string>();
+let contadorConexiones = 0;
+
+function idDe(ws: object): string {
+  let id = idsPorConexion.get(ws);
+  if (!id) {
+    id = `conn-${++contadorConexiones}-${Date.now()}`;
+    idsPorConexion.set(ws, id);
+  }
+  return id;
+}
 
 function obtenerIPLocal(): string {
   for (const ifaces of Object.values(os.networkInterfaces())) {
@@ -46,7 +59,8 @@ const hostPublico    = process.env.HOST_PUBLICO   || obtenerIPLocal();
 const urlJuego = `http://${hostPublico}:${puertoPublico}`;
 
 const app = new Elysia({ adapter: node() })
-  // Pag del juego
+
+// Pag del juego
   .get('*', ({ request }) => {
     const url    = new URL(request.url).pathname;
     const entry  = ARCHIVOS[url];
@@ -59,10 +73,10 @@ const app = new Elysia({ adapter: node() })
     }
   })
 
-  // WebSocket
+// WebSocket
   .ws('/ws', {
     open(ws) {
-      clientes.set(ws.id, { send: (msg) => ws.send(msg) });
+      clientes.set(idDe(ws), { send: (msg) => ws.send(msg) });
     },
 
     message(ws, raw) {
@@ -86,11 +100,11 @@ const app = new Elysia({ adapter: node() })
           console.log('🚫 Partida llena — conexión rechazada');
           return;
         }
-        const resultado = registrarJugador(ws.id);
+        const resultado = registrarJugador(idDe(ws));
         if (!resultado) return;
         ws.send(JSON.stringify({
           tipo:   'bienvenido',
-          id:     ws.id,
+          id:     idDe(ws),
           nombre: resultado.nombre,
           color:  resultado.color,
         }));
@@ -99,13 +113,13 @@ const app = new Elysia({ adapter: node() })
       }
 
       if (mensaje.tipo === 'input') {
-        registrarInput(ws.id, mensaje.direccion, mensaje.estado);
+        registrarInput(idDe(ws), mensaje.direccion, mensaje.estado);
       }
     },
 
     close(ws) {
-      clientes.delete(ws.id);
-      desregistrarJugador(ws.id, enviarATodos);
+      clientes.delete(idDe(ws));
+      desregistrarJugador(idDe(ws), enviarATodos);
     },
   })
 
