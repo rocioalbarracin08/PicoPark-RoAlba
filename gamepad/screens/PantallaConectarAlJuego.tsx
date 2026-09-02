@@ -8,6 +8,10 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 
 import type { InfoJugador } from '../App';
 
+function generarIdUnico(): string {
+  return `gamepad-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 interface Props {
   onConectado: (info: InfoJugador, ws: WebSocket) => void;
 }
@@ -36,7 +40,8 @@ export function PantallaConexion({ onConectado }: Props) {
       return;
     }
 
-    const urlWS = `ws://${host}/ws`;
+    const idPropio = generarIdUnico();
+    const urlWS = `ws://${host}/ws?id=${idPropio}`;
     setConectando(true);
     conexionManejada.current = false;
 

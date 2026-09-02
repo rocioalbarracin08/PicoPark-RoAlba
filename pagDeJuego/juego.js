@@ -72,8 +72,10 @@ function mostrarQR(url) {
   }
 }
 
-// ── WebSocket ────────────────────────────────────────────
-const urlWS = `ws://${window.location.host}/ws`;
+// WebSocket
+const miIdConexion = crypto.randomUUID();
+const urlWS = `ws://${window.location.host}/ws?id=${miIdConexion}`;
+
 let ws = null;
 let intervaloReconexion = null;
 

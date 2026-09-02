@@ -1,5 +1,5 @@
 import Matter from 'matter-js';
-import type { Caja } from './configuracionNiveles';
+import type { Caja } from './configuracionNiveles.ts';
 
 const { Engine, Bodies, Body, Composite } = Matter;
 
