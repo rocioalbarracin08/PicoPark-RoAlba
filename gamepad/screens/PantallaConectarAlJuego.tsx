@@ -39,8 +39,9 @@ export function PantallaConexion({ onConectado }: Props) {
       Alert.alert('Error', 'Ingresá una IP válida, ej: 192.168.1.5:3000');
       return;
     }
-    const miIdConexion = generarIdUnico();
-    const urlWS = `ws://${window.location.host}/ws?id=${miIdConexion}`;
+
+    const idPropio = generarIdUnico();
+    const urlWS = `ws://${host}/ws?id=${idPropio}`;
     setConectando(true);
     conexionManejada.current = false;
 

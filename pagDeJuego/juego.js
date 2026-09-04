@@ -73,7 +73,11 @@ function mostrarQR(url) {
 }
 
 // WebSocket
-const miIdConexion = crypto.randomUUID();
+function generarIdUnico() {
+  return `pantalla-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const miIdConexion = generarIdUnico();
 const urlWS = `ws://${window.location.host}/ws?id=${miIdConexion}`;
 
 let ws = null;
