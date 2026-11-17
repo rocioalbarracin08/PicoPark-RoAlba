@@ -1,4 +1,4 @@
-name: CI - Build y Push a Docker Hub
+name: CI/CD - Build, Push y Deploy en VM
 
 on:
   push:
@@ -10,18 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Descarga tu código fuente en la compu virtual de GitHub
       - name: Descargar código del repositorio
         uses: actions/checkout@v4
 
-      # 2. Inicia sesión en Docker Hub usando tus Secrets
       - name: Iniciar sesión en Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 3. Construye la imagen desde ./servidor/Dockerfile y la sube a Docker Hub
       - name: Construir y subir imagen Docker
         uses: docker/build-push-action@v6
         with:
@@ -31,3 +28,20 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/picopark-server:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/picopark-server:${{ github.sha }}
+
+  deploy-vm:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Desplegar nueva imagen en la VM por SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/PicoPark-RoAlba
+            docker compose pull
+            docker compose up -d
+            docker image prune -f

@@ -1,6 +1,6 @@
 services:
   picopark-server:
-    image: rocioalbarracin/picopark-server:v1.0
+    image: rocioalbarracin/picopark-server:latest
     container_name: servidor-picopark
     ports:
       - "3003:3000"
