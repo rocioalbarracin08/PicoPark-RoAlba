@@ -1,12 +1,10 @@
 services:
   picopark-server:
-    build:
-      context: .
-      dockerfile: servidor/Dockerfile
-    container_name: picopark-server
+    image: rocioalbarracin/picopark-server:v1.0
+    container_name: servidor-picopark
     ports:
-      - "8081:3000"        
+      - "3003:3000"
     environment:
-      - HOST_PUBLICO=10.56.31.30    
-      - PUERTO_PUBLICO=8081        
+      - HOST_PUBLICO=10.56.31.30
+      - PUERTO_PUBLICO=3003
     restart: unless-stopped
