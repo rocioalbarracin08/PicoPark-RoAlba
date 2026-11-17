@@ -25,7 +25,7 @@ jobs:
       - name: Construir y subir imagen Docker
         uses: docker/build-push-action@v6
         with:
-          context: ./servidor
+          context: .
           file: ./servidor/Dockerfile
           push: true
           tags: |
