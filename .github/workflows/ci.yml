@@ -31,17 +31,12 @@ jobs:
 
   deploy-vm:
     needs: build-and-push
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
-      - name: Desplegar nueva imagen en la VM por SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            cd ~/PicoPark-RoAlba
-            docker compose pull
-            docker compose up -d
-            docker image prune -f
+      - name: Desplegar nueva imagen en la VM local
+        run: |
+          cd ~/PicoPark-RoAlba
+          docker compose pull
+          docker compose up -d
+          docker image prune -f
